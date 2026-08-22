@@ -31,3 +31,7 @@ Windows。提供节点、虚拟机、容器和存储的集中管理，并内置�
   JuiceSSH 风格快捷键。
 - 支持自签名 Proxmox 证书和可配置的自动刷新间隔。
 - 使用 Material 3 设计，并在支持的平台使用动态取色。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE) 开源。
