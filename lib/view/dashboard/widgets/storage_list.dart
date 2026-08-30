@@ -10,11 +10,15 @@ class StorageList extends StatelessWidget {
   const StorageList({
     required this.storages,
     required this.permissionDenied,
+    this.onStorageTap,
+    this.selectedStorageId,
     super.key,
   });
 
   final List<PveResource> storages;
   final bool permissionDenied;
+  final ValueChanged<PveResource>? onStorageTap;
+  final String? selectedStorageId;
 
   @override
   Widget build(BuildContext context) {
@@ -35,33 +39,48 @@ class StorageList extends StatelessWidget {
         separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (context, index) {
           final storage = storages[index];
-          return Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          final selected = storage.id == selectedStorageId;
+          final colorScheme = Theme.of(context).colorScheme;
+          return InkWell(
+            onTap: onStorageTap == null ? null : () => onStorageTap!(storage),
+            child: ColoredBox(
+              color: selected
+                  ? colorScheme.primaryContainer.withValues(alpha: 0.42)
+                  : Colors.transparent,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.storage_rounded),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        storage.name,
-                        style: Theme.of(context).textTheme.titleSmall,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                    Row(
+                      children: [
+                        const Icon(Icons.storage_rounded),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            storage.name,
+                            style: Theme.of(context).textTheme.titleSmall,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(storage.node),
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ],
                     ),
-                    Text(storage.node),
+                    const SizedBox(height: 10),
+                    UsageLine(
+                      label: context.l10n.capacity,
+                      value: storage.diskRatio,
+                      text:
+                          '${bytes(storage.diskUsed)} / ${bytes(storage.diskTotal)}',
+                    ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                UsageLine(
-                  label: context.l10n.capacity,
-                  value: storage.diskRatio,
-                  text:
-                      '${bytes(storage.diskUsed)} / ${bytes(storage.diskTotal)}',
-                ),
-              ],
+              ),
             ),
           );
         },

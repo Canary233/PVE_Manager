@@ -5,7 +5,9 @@ import 'package:pve_manager/app/pve_manager_app.dart';
 import 'package:pve_manager/core/widgets/usage_line.dart';
 import 'package:pve_manager/data/models/proxmox_auth_mode.dart';
 import 'package:pve_manager/data/models/pve_server_config.dart';
+import 'package:pve_manager/data/models/pve_resource.dart';
 import 'package:pve_manager/l10n/generated/app_localizations.dart';
+import 'package:pve_manager/view/dashboard/widgets/storage_list.dart';
 import 'package:pve_manager/view/home/widgets/server_card.dart';
 import 'package:pve_manager/view/home/widgets/server_form_dialog.dart';
 import 'package:pve_manager/view/settings/settings_screen.dart';
@@ -199,5 +201,44 @@ void main() {
     expect(find.text('检查更新'), findsOneWidget);
     expect(find.text('从 GitHub 获取最新版本'), findsOneWidget);
     expect(find.byIcon(Icons.system_update_alt_rounded), findsOneWidget);
+  });
+
+  testWidgets('storage list opens storage details when tapped', (
+    WidgetTester tester,
+  ) async {
+    PveResource? tappedStorage;
+    const storage = PveResource(
+      id: 'storage/local-lvm',
+      type: 'storage',
+      name: 'local-lvm',
+      node: 'pve',
+      status: 'available',
+      cpu: 0,
+      memoryUsed: 0,
+      memoryTotal: 0,
+      diskUsed: 40 * 1000,
+      diskTotal: 100 * 1000,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: Scaffold(
+          body: StorageList(
+            storages: const [storage],
+            permissionDenied: false,
+            onStorageTap: (value) => tappedStorage = value,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('local-lvm'), findsOneWidget);
+    expect(find.text('pve'), findsOneWidget);
+    await tester.tap(find.text('local-lvm'));
+    expect(tappedStorage, same(storage));
   });
 }

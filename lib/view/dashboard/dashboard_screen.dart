@@ -15,6 +15,7 @@ import 'package:pve_manager/view/guest/guest_config_screen.dart';
 import 'package:pve_manager/view/guest/guest_detail_screen.dart';
 import 'package:pve_manager/view/dashboard/widgets/guest_panel.dart';
 import 'package:pve_manager/view/node/node_detail_screen.dart';
+import 'package:pve_manager/view/storage/storage_detail_screen.dart';
 import 'package:pve_manager/view/dashboard/widgets/node_grid.dart';
 import 'package:pve_manager/view/dashboard/widgets/section_header.dart';
 import 'package:pve_manager/view/dashboard/widgets/storage_list.dart';
@@ -327,6 +328,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  void _selectStorage(PveResource storage) {
+    setState(() {
+      _selection = _DashboardSelection.storage(storage.id);
+    });
+  }
+
+  Future<void> _openStorageRoute(PveResource storage) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => StorageDetailScreen(
+          client: widget.client,
+          storage: storage,
+          autoRefreshIntervalListenable: widget.autoRefreshIntervalListenable,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _refreshSnapshot();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -364,10 +386,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               snapshot: snapshotData,
               guests: guests,
               storages: storages,
-              selection: _effectiveSelection(snapshotData.nodes, guests),
+              selection: _effectiveSelection(
+                snapshotData.nodes,
+                guests,
+                storages,
+              ),
               onRefresh: _refreshSnapshot,
               onNodeTap: _selectNode,
               onGuestTap: _selectGuest,
+              onStorageTap: _selectStorage,
               detailBuilder: _buildSplitDetail,
             );
           }
@@ -379,6 +406,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             onRefresh: _refreshSnapshot,
             onNodeTap: _openNodeRoute,
             onGuestTap: _openGuestRoute,
+            onStorageTap: _openStorageRoute,
           );
         },
       ),
@@ -388,6 +416,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   _DashboardSelection? _effectiveSelection(
     List<PveNode> nodes,
     List<PveResource> guests,
+    List<PveResource> storages,
   ) {
     final selection = _selection;
     if (selection != null) {
@@ -403,6 +432,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (guests.any((guest) => guest.id == selection.id)) {
             return selection;
           }
+        case _DashboardSelectionType.storage:
+          if (storages.any((storage) => storage.id == selection.id)) {
+            return selection;
+          }
       }
     }
 
@@ -413,6 +446,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (guests.isNotEmpty) {
       return _DashboardSelection.guest(guests.first.id);
     }
+    if (storages.isNotEmpty) {
+      return _DashboardSelection.storage(storages.first.id);
+    }
     return null;
   }
 
@@ -421,6 +457,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _DashboardSelection? selection,
     List<PveNode> nodes,
     List<PveResource> guests,
+    List<PveResource> storages,
   ) {
     if (selection == null) {
       return const SizedBox.shrink();
@@ -465,6 +502,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
           embedded: true,
           onBack: () => _selectGuestDetail(guest),
         );
+      case _DashboardSelectionType.storage:
+        final storage = _findStorage(storages, selection.id);
+        if (storage == null) {
+          return const SizedBox.shrink();
+        }
+        return StorageDetailScreen(
+          key: ValueKey('storage-detail-${storage.id}'),
+          client: widget.client,
+          storage: storage,
+          autoRefreshIntervalListenable: widget.autoRefreshIntervalListenable,
+          embedded: true,
+        );
     }
   }
 
@@ -485,9 +534,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     return null;
   }
+
+  PveResource? _findStorage(List<PveResource> storages, String id) {
+    for (final storage in storages) {
+      if (storage.id == id) {
+        return storage;
+      }
+    }
+    return null;
+  }
 }
 
-enum _DashboardSelectionType { node, guest, guestConfig }
+enum _DashboardSelectionType { node, guest, guestConfig, storage }
 
 class _DashboardSelection {
   const _DashboardSelection._(this.type, this.id);
@@ -501,6 +559,9 @@ class _DashboardSelection {
   const _DashboardSelection.guestConfig(String id)
     : this._(_DashboardSelectionType.guestConfig, id);
 
+  const _DashboardSelection.storage(String id)
+    : this._(_DashboardSelectionType.storage, id);
+
   final _DashboardSelectionType type;
   final String id;
 }
@@ -513,6 +574,7 @@ class _DashboardList extends StatelessWidget {
     required this.onRefresh,
     required this.onNodeTap,
     required this.onGuestTap,
+    required this.onStorageTap,
     this.selection,
   });
 
@@ -522,6 +584,7 @@ class _DashboardList extends StatelessWidget {
   final RefreshCallback onRefresh;
   final ValueChanged<PveNode> onNodeTap;
   final ValueChanged<PveResource> onGuestTap;
+  final ValueChanged<PveResource> onStorageTap;
   final _DashboardSelection? selection;
 
   @override
@@ -570,6 +633,11 @@ class _DashboardList extends StatelessWidget {
           StorageList(
             storages: storages,
             permissionDenied: snapshot.storagePermissionDenied,
+            onStorageTap: onStorageTap,
+            selectedStorageId:
+                selection?.type == _DashboardSelectionType.storage
+                ? selection?.id
+                : null,
           ),
         ],
       ),
@@ -618,6 +686,7 @@ class _DashboardSplitLayout extends StatelessWidget {
     required this.onRefresh,
     required this.onNodeTap,
     required this.onGuestTap,
+    required this.onStorageTap,
     required this.detailBuilder,
   });
 
@@ -628,11 +697,13 @@ class _DashboardSplitLayout extends StatelessWidget {
   final RefreshCallback onRefresh;
   final ValueChanged<PveNode> onNodeTap;
   final ValueChanged<PveResource> onGuestTap;
+  final ValueChanged<PveResource> onStorageTap;
   final Widget Function(
     BuildContext context,
     _DashboardSelection? selection,
     List<PveNode> nodes,
     List<PveResource> guests,
+    List<PveResource> storages,
   )
   detailBuilder;
 
@@ -655,6 +726,7 @@ class _DashboardSplitLayout extends StatelessWidget {
                 onRefresh: onRefresh,
                 onNodeTap: onNodeTap,
                 onGuestTap: onGuestTap,
+                onStorageTap: onStorageTap,
                 selection: selection,
               ),
             ),
@@ -669,6 +741,7 @@ class _DashboardSplitLayout extends StatelessWidget {
                   selection,
                   snapshot.nodes,
                   guests,
+                  storages,
                 ),
               ),
             ),
