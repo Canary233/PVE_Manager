@@ -38,6 +38,55 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get checkForUpdates => '检查更新';
+
+  @override
+  String get checkForUpdatesHint => '从 GitHub 获取最新版本';
+
+  @override
+  String get checkingForUpdates => '正在检查更新...';
+
+  @override
+  String get upToDate => '已是最新版本';
+
+  @override
+  String get updateAvailable => '发现新版本';
+
+  @override
+  String currentVersion(Object version) {
+    return '当前版本：$version';
+  }
+
+  @override
+  String latestVersion(Object version) {
+    return '最新版本：$version';
+  }
+
+  @override
+  String get downloadUpdate => '下载更新';
+
+  @override
+  String get viewRelease => '查看 Release';
+
+  @override
+  String get releaseNotes => '更新说明';
+
+  @override
+  String get updateCheckFailed => '检查更新失败，请稍后重试。';
+
+  @override
+  String get noReleasePublished => 'GitHub 尚未发布可用版本。';
+
+  @override
+  String get updatePlatformUnsupported => '当前平台暂不支持应用更新。';
+
+  @override
+  String get updateAssetMissing => '没有找到适用于当前平台的安装包，将打开 Release 页面。';
+
+  @override
+  String get updateDownloadFailed => '无法打开更新下载地址。';
+
+  @override
   String get languageChineseSimplified => '简体中文';
 
   @override

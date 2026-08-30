@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:pve_manager/l10n/generated/app_localizations.dart';
 import 'package:pve_manager/data/models/guest_action.dart';
 import 'package:pve_manager/data/models/node_power_action.dart';
+import 'package:pve_manager/data/services/app_update_service.dart';
 import 'package:pve_manager/data/services/proxmox_api_exception.dart';
 
 extension BuildContextLocalizations on BuildContext {
@@ -53,6 +54,9 @@ String localizedStatus(AppLocalizations l10n, String status) {
 }
 
 String localizedError(AppLocalizations l10n, Object error) {
+  if (error is AppUpdateException) {
+    return l10n.updateCheckFailed;
+  }
   if (error is ProxmoxApiException) {
     return error.localizedMessage(l10n);
   }

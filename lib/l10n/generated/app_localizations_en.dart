@@ -38,6 +38,59 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get checkForUpdates => 'Check for updates';
+
+  @override
+  String get checkForUpdatesHint => 'Get the latest version from GitHub';
+
+  @override
+  String get checkingForUpdates => 'Checking for updates...';
+
+  @override
+  String get upToDate => 'You\'re up to date';
+
+  @override
+  String get updateAvailable => 'Update available';
+
+  @override
+  String currentVersion(Object version) {
+    return 'Current version: $version';
+  }
+
+  @override
+  String latestVersion(Object version) {
+    return 'Latest version: $version';
+  }
+
+  @override
+  String get downloadUpdate => 'Download update';
+
+  @override
+  String get viewRelease => 'View release';
+
+  @override
+  String get releaseNotes => 'Release notes';
+
+  @override
+  String get updateCheckFailed =>
+      'Could not check for updates. Try again later.';
+
+  @override
+  String get noReleasePublished => 'No GitHub release is available yet.';
+
+  @override
+  String get updatePlatformUnsupported =>
+      'App updates are not supported on this platform.';
+
+  @override
+  String get updateAssetMissing =>
+      'No installer was found for this platform. The release page will be opened instead.';
+
+  @override
+  String get updateDownloadFailed =>
+      'The update download address could not be opened.';
+
+  @override
   String get languageChineseSimplified => 'Simplified Chinese';
 
   @override

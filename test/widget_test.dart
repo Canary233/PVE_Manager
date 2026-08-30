@@ -8,6 +8,7 @@ import 'package:pve_manager/data/models/pve_server_config.dart';
 import 'package:pve_manager/l10n/generated/app_localizations.dart';
 import 'package:pve_manager/view/home/widgets/server_card.dart';
 import 'package:pve_manager/view/home/widgets/server_form_dialog.dart';
+import 'package:pve_manager/view/settings/settings_screen.dart';
 
 void main() {
   testWidgets('shows the server list home screen', (WidgetTester tester) async {
@@ -172,5 +173,31 @@ void main() {
       tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
       isTrue,
     );
+  });
+
+  testWidgets('settings offers GitHub release updates', (
+    WidgetTester tester,
+  ) async {
+    final autoRefreshInterval = ValueNotifier(const Duration(seconds: 30));
+    addTearDown(autoRefreshInterval.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: SettingsScreen(
+          locale: const Locale('zh'),
+          onLocaleChanged: (_) {},
+          autoRefreshIntervalListenable: autoRefreshInterval,
+          onAutoRefreshIntervalChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('检查更新'), findsOneWidget);
+    expect(find.text('从 GitHub 获取最新版本'), findsOneWidget);
+    expect(find.byIcon(Icons.system_update_alt_rounded), findsOneWidget);
   });
 }

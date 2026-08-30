@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:pve_manager/core/l10n/l10n_extensions.dart';
 import 'package:pve_manager/core/settings/auto_refresh_settings.dart';
+import 'package:pve_manager/data/services/app_update_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -11,6 +15,7 @@ class SettingsScreen extends StatefulWidget {
     required this.onLocaleChanged,
     required this.autoRefreshIntervalListenable,
     required this.onAutoRefreshIntervalChanged,
+    this.updateService,
     this.embedded = false,
   });
 
@@ -18,6 +23,7 @@ class SettingsScreen extends StatefulWidget {
   final ValueChanged<Locale> onLocaleChanged;
   final ValueListenable<Duration> autoRefreshIntervalListenable;
   final ValueChanged<Duration> onAutoRefreshIntervalChanged;
+  final AppUpdateService? updateService;
   final bool embedded;
 
   @override
@@ -29,6 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const Locale _enLocale = Locale('en');
 
   late Duration _autoRefreshInterval;
+  bool _isCheckingForUpdates = false;
 
   @override
   void initState() {
@@ -105,6 +112,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => _showRefreshIntervalPicker(context),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                color: colorScheme.surfaceContainer,
+                child: ListTile(
+                  leading: const Icon(Icons.system_update_alt_rounded),
+                  title: Text(l10n.checkForUpdates),
+                  subtitle: Text(
+                    _isCheckingForUpdates
+                        ? l10n.checkingForUpdates
+                        : l10n.checkForUpdatesHint,
+                  ),
+                  trailing: _isCheckingForUpdates
+                      ? const SizedBox.square(
+                          dimension: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.chevron_right_rounded),
+                  onTap: _isCheckingForUpdates
+                      ? null
+                      : () => unawaited(_checkForUpdates()),
                 ),
               ),
             ],
@@ -295,6 +324,166 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _autoRefreshInterval = selectedInterval;
     });
     widget.onAutoRefreshIntervalChanged(selectedInterval);
+  }
+
+  Future<void> _checkForUpdates() async {
+    if (_isCheckingForUpdates) {
+      return;
+    }
+
+    setState(() {
+      _isCheckingForUpdates = true;
+    });
+
+    try {
+      final update = await (widget.updateService ?? AppUpdateService.instance)
+          .checkForUpdate();
+      if (!mounted) {
+        return;
+      }
+      if (update.hasUpdate) {
+        await _showUpdateDialog(update);
+      } else {
+        await _showSimpleDialog(
+          title: context.l10n.upToDate,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                context.l10n.currentVersion(update.currentVersion.toString()),
+              ),
+              const SizedBox(height: 8),
+              Text(context.l10n.latestVersion(update.latestVersion.toString())),
+            ],
+          ),
+        );
+      }
+    } on AppUpdateException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      final message = error.unsupportedPlatform
+          ? context.l10n.updatePlatformUnsupported
+          : error.statusCode == 404
+          ? context.l10n.noReleasePublished
+          : context.l10n.updateCheckFailed;
+      await _showSimpleDialog(title: message, content: Text(message));
+    } on Object {
+      if (!mounted) {
+        return;
+      }
+      await _showSimpleDialog(
+        title: context.l10n.updateCheckFailed,
+        content: Text(context.l10n.updateCheckFailed),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingForUpdates = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showUpdateDialog(AppUpdateInfo update) async {
+    final l10n = context.l10n;
+    final shouldDownload = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final releaseNotes = update.release.body.trim();
+        return AlertDialog(
+          title: Text(l10n.updateAvailable),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(l10n.currentVersion(update.currentVersion.toString())),
+                  const SizedBox(height: 4),
+                  Text(l10n.latestVersion(update.latestVersion.toString())),
+                  if (update.release.name.trim().isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      update.release.name,
+                      style: Theme.of(dialogContext).textTheme.titleMedium,
+                    ),
+                  ],
+                  if (releaseNotes.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      l10n.releaseNotes,
+                      style: Theme.of(dialogContext).textTheme.labelLarge,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(releaseNotes),
+                  ],
+                  if (!update.hasDirectDownload) ...[
+                    const SizedBox(height: 12),
+                    Text(l10n.updateAssetMissing),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(
+                update.hasDirectDownload
+                    ? l10n.downloadUpdate
+                    : l10n.viewRelease,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDownload != true || !mounted) {
+      return;
+    }
+
+    var launched = false;
+    try {
+      launched = await launchUrl(
+        update.downloadUri,
+        mode: LaunchMode.externalApplication,
+      );
+    } on Object {
+      launched = false;
+    }
+    if (!launched && mounted) {
+      await _showSimpleDialog(
+        title: l10n.updateDownloadFailed,
+        content: Text(l10n.updateDownloadFailed),
+      );
+    }
+  }
+
+  Future<void> _showSimpleDialog({
+    required String title,
+    required Widget content,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: content,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(context.l10n.confirm),
+          ),
+        ],
+      ),
+    );
   }
 
   String _languageName(BuildContext context, Locale languageLocale) {

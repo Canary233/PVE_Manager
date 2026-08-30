@@ -152,6 +152,96 @@ abstract class AppLocalizations {
   /// **'{seconds} 秒'**
   String secondsInterval(int seconds);
 
+  /// No description provided for @checkForUpdates.
+  ///
+  /// In zh, this message translates to:
+  /// **'检查更新'**
+  String get checkForUpdates;
+
+  /// No description provided for @checkForUpdatesHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'从 GitHub 获取最新版本'**
+  String get checkForUpdatesHint;
+
+  /// No description provided for @checkingForUpdates.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在检查更新...'**
+  String get checkingForUpdates;
+
+  /// No description provided for @upToDate.
+  ///
+  /// In zh, this message translates to:
+  /// **'已是最新版本'**
+  String get upToDate;
+
+  /// No description provided for @updateAvailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'发现新版本'**
+  String get updateAvailable;
+
+  /// No description provided for @currentVersion.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前版本：{version}'**
+  String currentVersion(Object version);
+
+  /// No description provided for @latestVersion.
+  ///
+  /// In zh, this message translates to:
+  /// **'最新版本：{version}'**
+  String latestVersion(Object version);
+
+  /// No description provided for @downloadUpdate.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载更新'**
+  String get downloadUpdate;
+
+  /// No description provided for @viewRelease.
+  ///
+  /// In zh, this message translates to:
+  /// **'查看 Release'**
+  String get viewRelease;
+
+  /// No description provided for @releaseNotes.
+  ///
+  /// In zh, this message translates to:
+  /// **'更新说明'**
+  String get releaseNotes;
+
+  /// No description provided for @updateCheckFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'检查更新失败，请稍后重试。'**
+  String get updateCheckFailed;
+
+  /// No description provided for @noReleasePublished.
+  ///
+  /// In zh, this message translates to:
+  /// **'GitHub 尚未发布可用版本。'**
+  String get noReleasePublished;
+
+  /// No description provided for @updatePlatformUnsupported.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前平台暂不支持应用更新。'**
+  String get updatePlatformUnsupported;
+
+  /// No description provided for @updateAssetMissing.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有找到适用于当前平台的安装包，将打开 Release 页面。'**
+  String get updateAssetMissing;
+
+  /// No description provided for @updateDownloadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法打开更新下载地址。'**
+  String get updateDownloadFailed;
+
   /// No description provided for @languageChineseSimplified.
   ///
   /// In zh, this message translates to:
