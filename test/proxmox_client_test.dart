@@ -60,6 +60,54 @@ void main() {
     },
   );
 
+  test(
+    'clears an expired password session after an authenticated 401',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+
+      var requestCount = 0;
+      server.listen((request) async {
+        requestCount += 1;
+        request.response.headers.contentType = ContentType.json;
+        if (requestCount == 1) {
+          request.response.write(
+            jsonEncode({
+              'data': {'ticket': 'ticket', 'CSRFPreventionToken': 'csrf'},
+            }),
+          );
+        } else {
+          request.response.statusCode = HttpStatus.unauthorized;
+          request.response.write(jsonEncode({'message': 'expired'}));
+        }
+        await request.response.close();
+      });
+
+      final client = ProxmoxClient(
+        origin: 'http://${server.address.address}:${server.port}',
+        username: 'root',
+        password: 'secret',
+        realm: 'pam',
+      );
+      addTearDown(client.close);
+
+      await client.login();
+      expect(client.hasActiveSession, isTrue);
+
+      await expectLater(
+        client.getResources(),
+        throwsA(
+          isA<ProxmoxApiException>().having(
+            (error) => error.code,
+            'code',
+            ProxmoxErrorCode.sessionExpired,
+          ),
+        ),
+      );
+      expect(client.hasActiveSession, isFalse);
+    },
+  );
+
   test('api token loads disk temperatures through PVE disk APIs', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);

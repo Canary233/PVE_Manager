@@ -979,6 +979,15 @@ class ProxmoxClient {
       );
     }
 
+    if (response.statusCode == HttpStatus.unauthorized &&
+        needsAuth &&
+        hasActiveSession) {
+      _ticket = null;
+      _csrfToken = null;
+      _apiTokenAuthenticated = false;
+      throw const ProxmoxApiException(ProxmoxErrorCode.sessionExpired);
+    }
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final message = decoded['message']?.toString();
       throw ProxmoxApiException(
