@@ -1,12 +1,10 @@
 import 'package:pve_manager/l10n/generated/app_localizations.dart';
 
 String normalizeOrigin(String value) {
-  final trimmed = value.trim();
-  final withScheme =
-      trimmed.startsWith('http://') || trimmed.startsWith('https://')
-      ? trimmed
-      : 'https://$trimmed';
-  final uri = Uri.parse(withScheme);
+  final uri = _parseOrigin(value);
+  if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
+    throw const FormatException('Invalid Proxmox address');
+  }
 
   return Uri(
     scheme: uri.scheme,
@@ -20,7 +18,7 @@ String? validateOrigin(AppLocalizations l10n, String? value) {
     return l10n.enterProxmoxAddress;
   }
 
-  final uri = Uri.tryParse(normalizeOrigin(value));
+  final uri = _parseOrigin(value);
   if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
     return l10n.invalidAddress;
   }
@@ -30,6 +28,22 @@ String? validateOrigin(AppLocalizations l10n, String? value) {
   }
 
   return null;
+}
+
+Uri? _parseOrigin(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+
+  // Preserve an explicitly supplied scheme so unsupported schemes are not
+  // accidentally treated as part of a hostname (for example, ftp://host).
+  final hasScheme = RegExp(
+    r'^[a-z][a-z0-9+.-]*://',
+    caseSensitive: false,
+  ).hasMatch(trimmed);
+  final candidate = hasScheme ? trimmed : 'https://$trimmed';
+  return Uri.tryParse(candidate);
 }
 
 String? requiredField(String? value, String message) {
