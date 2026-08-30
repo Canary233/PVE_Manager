@@ -441,6 +441,84 @@ class AppLocalizationsZh extends AppLocalizations {
   String get storage => '存储';
 
   @override
+  String get storageDetails => '存储详情';
+
+  @override
+  String get storageOverview => '概要';
+
+  @override
+  String get storageBackups => '备份';
+
+  @override
+  String get storageVmDisks => 'VM 磁盘';
+
+  @override
+  String get storageCtVolumes => 'CT 卷';
+
+  @override
+  String get storageIsoImages => 'ISO 镜像';
+
+  @override
+  String get storageCtTemplates => 'CT 模板';
+
+  @override
+  String get storageSnippets => '配置片段';
+
+  @override
+  String get storageImport => '导入';
+
+  @override
+  String get storagePermissions => '权限';
+
+  @override
+  String get storageStatus => '状态';
+
+  @override
+  String get storagePath => '路径';
+
+  @override
+  String get storageBackendType => '类型';
+
+  @override
+  String get storageCapacity => '容量';
+
+  @override
+  String get storageUsed => '已使用';
+
+  @override
+  String get storageAvailable => '可用空间';
+
+  @override
+  String get storageActive => '活动';
+
+  @override
+  String get storageEnabled => '已启用';
+
+  @override
+  String get storageShared => '共享';
+
+  @override
+  String get storageContent => '内容';
+
+  @override
+  String get storageVolume => '卷';
+
+  @override
+  String get storageFormat => '格式';
+
+  @override
+  String get storageVmid => 'VM/CT ID';
+
+  @override
+  String get storageCreatedAt => '创建时间';
+
+  @override
+  String get storageNoContent => '此存储中没有对应内容。';
+
+  @override
+  String get storageSectionUnsupported => '此分类暂不支持查看。';
+
+  @override
   String nodesCount(int count) {
     return '$count 台';
   }

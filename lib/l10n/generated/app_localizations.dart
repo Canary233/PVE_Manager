@@ -944,6 +944,162 @@ abstract class AppLocalizations {
   /// **'存储'**
   String get storage;
 
+  /// No description provided for @storageDetails.
+  ///
+  /// In zh, this message translates to:
+  /// **'存储详情'**
+  String get storageDetails;
+
+  /// No description provided for @storageOverview.
+  ///
+  /// In zh, this message translates to:
+  /// **'概要'**
+  String get storageOverview;
+
+  /// No description provided for @storageBackups.
+  ///
+  /// In zh, this message translates to:
+  /// **'备份'**
+  String get storageBackups;
+
+  /// No description provided for @storageVmDisks.
+  ///
+  /// In zh, this message translates to:
+  /// **'VM 磁盘'**
+  String get storageVmDisks;
+
+  /// No description provided for @storageCtVolumes.
+  ///
+  /// In zh, this message translates to:
+  /// **'CT 卷'**
+  String get storageCtVolumes;
+
+  /// No description provided for @storageIsoImages.
+  ///
+  /// In zh, this message translates to:
+  /// **'ISO 镜像'**
+  String get storageIsoImages;
+
+  /// No description provided for @storageCtTemplates.
+  ///
+  /// In zh, this message translates to:
+  /// **'CT 模板'**
+  String get storageCtTemplates;
+
+  /// No description provided for @storageSnippets.
+  ///
+  /// In zh, this message translates to:
+  /// **'配置片段'**
+  String get storageSnippets;
+
+  /// No description provided for @storageImport.
+  ///
+  /// In zh, this message translates to:
+  /// **'导入'**
+  String get storageImport;
+
+  /// No description provided for @storagePermissions.
+  ///
+  /// In zh, this message translates to:
+  /// **'权限'**
+  String get storagePermissions;
+
+  /// No description provided for @storageStatus.
+  ///
+  /// In zh, this message translates to:
+  /// **'状态'**
+  String get storageStatus;
+
+  /// No description provided for @storagePath.
+  ///
+  /// In zh, this message translates to:
+  /// **'路径'**
+  String get storagePath;
+
+  /// No description provided for @storageBackendType.
+  ///
+  /// In zh, this message translates to:
+  /// **'类型'**
+  String get storageBackendType;
+
+  /// No description provided for @storageCapacity.
+  ///
+  /// In zh, this message translates to:
+  /// **'容量'**
+  String get storageCapacity;
+
+  /// No description provided for @storageUsed.
+  ///
+  /// In zh, this message translates to:
+  /// **'已使用'**
+  String get storageUsed;
+
+  /// No description provided for @storageAvailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'可用空间'**
+  String get storageAvailable;
+
+  /// No description provided for @storageActive.
+  ///
+  /// In zh, this message translates to:
+  /// **'活动'**
+  String get storageActive;
+
+  /// No description provided for @storageEnabled.
+  ///
+  /// In zh, this message translates to:
+  /// **'已启用'**
+  String get storageEnabled;
+
+  /// No description provided for @storageShared.
+  ///
+  /// In zh, this message translates to:
+  /// **'共享'**
+  String get storageShared;
+
+  /// No description provided for @storageContent.
+  ///
+  /// In zh, this message translates to:
+  /// **'内容'**
+  String get storageContent;
+
+  /// No description provided for @storageVolume.
+  ///
+  /// In zh, this message translates to:
+  /// **'卷'**
+  String get storageVolume;
+
+  /// No description provided for @storageFormat.
+  ///
+  /// In zh, this message translates to:
+  /// **'格式'**
+  String get storageFormat;
+
+  /// No description provided for @storageVmid.
+  ///
+  /// In zh, this message translates to:
+  /// **'VM/CT ID'**
+  String get storageVmid;
+
+  /// No description provided for @storageCreatedAt.
+  ///
+  /// In zh, this message translates to:
+  /// **'创建时间'**
+  String get storageCreatedAt;
+
+  /// No description provided for @storageNoContent.
+  ///
+  /// In zh, this message translates to:
+  /// **'此存储中没有对应内容。'**
+  String get storageNoContent;
+
+  /// No description provided for @storageSectionUnsupported.
+  ///
+  /// In zh, this message translates to:
+  /// **'此分类暂不支持查看。'**
+  String get storageSectionUnsupported;
+
   /// No description provided for @nodesCount.
   ///
   /// In zh, this message translates to:

@@ -448,6 +448,84 @@ class AppLocalizationsEn extends AppLocalizations {
   String get storage => 'Storage';
 
   @override
+  String get storageDetails => 'Storage details';
+
+  @override
+  String get storageOverview => 'Overview';
+
+  @override
+  String get storageBackups => 'Backups';
+
+  @override
+  String get storageVmDisks => 'VM disks';
+
+  @override
+  String get storageCtVolumes => 'CT volumes';
+
+  @override
+  String get storageIsoImages => 'ISO images';
+
+  @override
+  String get storageCtTemplates => 'CT templates';
+
+  @override
+  String get storageSnippets => 'Snippets';
+
+  @override
+  String get storageImport => 'Import';
+
+  @override
+  String get storagePermissions => 'Permissions';
+
+  @override
+  String get storageStatus => 'Status';
+
+  @override
+  String get storagePath => 'Path';
+
+  @override
+  String get storageBackendType => 'Type';
+
+  @override
+  String get storageCapacity => 'Capacity';
+
+  @override
+  String get storageUsed => 'Used';
+
+  @override
+  String get storageAvailable => 'Available';
+
+  @override
+  String get storageActive => 'Active';
+
+  @override
+  String get storageEnabled => 'Enabled';
+
+  @override
+  String get storageShared => 'Shared';
+
+  @override
+  String get storageContent => 'Content';
+
+  @override
+  String get storageVolume => 'Volume';
+
+  @override
+  String get storageFormat => 'Format';
+
+  @override
+  String get storageVmid => 'VM/CT ID';
+
+  @override
+  String get storageCreatedAt => 'Created';
+
+  @override
+  String get storageNoContent => 'No matching content in this storage.';
+
+  @override
+  String get storageSectionUnsupported => 'This section is not supported yet.';
+
+  @override
   String nodesCount(int count) {
     return '$count nodes';
   }
