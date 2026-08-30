@@ -260,32 +260,61 @@ class _StorageDetailScreenState extends State<StorageDetailScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: context.l10n.storageContent,
-          filled: true,
-          fillColor: colorScheme.surfaceContainer,
-        ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<_StorageSection>(
-            value: _section,
-            isExpanded: true,
-            items: [
-              for (final section in _StorageSection.values)
-                DropdownMenuItem(
-                  value: section,
-                  child: Text(_sectionLabel(context, section)),
-                ),
-            ],
-            onChanged: (section) {
-              if (section != null) {
-                _selectSection(section);
-              }
-            },
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => unawaited(_showMobileSectionPicker(context)),
+        child: InputDecorator(
+          decoration: InputDecoration(
+            labelText: context.l10n.storageContent,
+            filled: true,
+            fillColor: colorScheme.surfaceContainer,
+            suffixIcon: const Icon(Icons.expand_more_rounded),
           ),
+          child: Text(_sectionLabel(context, _section)),
         ),
       ),
     );
+  }
+
+  Future<void> _showMobileSectionPicker(BuildContext context) async {
+    final selected = await showDialog<_StorageSection>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          scrollable: true,
+          title: Text(context.l10n.storageContent),
+          content: RadioGroup<_StorageSection>(
+            groupValue: _section,
+            onChanged: (value) {
+              if (value != null) {
+                Navigator.of(dialogContext).pop(value);
+              }
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final section in _StorageSection.values)
+                  RadioListTile<_StorageSection>(
+                    value: section,
+                    title: Text(_sectionLabel(context, section)),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(context.l10n.cancel),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (selected != null && mounted) {
+      _selectSection(selected);
+    }
   }
 
   Widget _buildSectionContent(BuildContext context, PveStorageDetail detail) {
@@ -400,7 +429,9 @@ class _StorageDetailScreenState extends State<StorageDetailScreen> {
                   runSpacing: 8,
                   children: [
                     for (final type in detail.contentTypes)
-                      Chip(label: Text(_contentTypeLabel(context, type))),
+                      _StorageContentTag(
+                        label: _contentTypeLabel(context, type),
+                      ),
                   ],
                 ),
             ],
@@ -513,6 +544,33 @@ enum _StorageSection {
 
   final String? contentType;
   final IconData icon;
+}
+
+class _StorageContentTag extends StatelessWidget {
+  const _StorageContentTag({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: colorScheme.onSecondaryContainer,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _StorageCard extends StatelessWidget {
