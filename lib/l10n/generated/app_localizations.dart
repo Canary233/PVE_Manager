@@ -737,8 +737,14 @@ abstract class AppLocalizations {
   /// No description provided for @allowSelfSignedCertificate.
   ///
   /// In zh, this message translates to:
-  /// **'允许自签名证书'**
+  /// **'忽略 TLS 证书错误'**
   String get allowSelfSignedCertificate;
+
+  /// No description provided for @selfSignedCertificateWarning.
+  ///
+  /// In zh, this message translates to:
+  /// **'此选项会关闭证书校验，可能导致凭据遭受中间人攻击。仅对确认可信的 PVE 主机启用。'**
+  String get selfSignedCertificateWarning;
 
   /// No description provided for @twoFactorTitle.
   ///

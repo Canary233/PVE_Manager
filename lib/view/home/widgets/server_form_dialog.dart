@@ -46,7 +46,7 @@ class _ServerFormDialogState extends State<ServerFormDialog> {
     );
     _authMode = server?.authMode ?? ProxmoxAuthMode.password;
     _realm = _realmOptions.contains(server?.realm) ? server!.realm : 'pam';
-    _ignoreCertificateErrors = server?.ignoreCertificateErrors ?? true;
+    _ignoreCertificateErrors = server?.ignoreCertificateErrors ?? false;
   }
 
   @override
@@ -250,6 +250,20 @@ class _ServerFormDialogState extends State<ServerFormDialog> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: Text(l10n.allowSelfSignedCertificate),
+                  subtitle: Text(
+                    l10n.selfSignedCertificateWarning,
+                    style: TextStyle(
+                      color: _ignoreCertificateErrors
+                          ? Theme.of(context).colorScheme.error
+                          : null,
+                    ),
+                  ),
+                  secondary: Icon(
+                    Icons.warning_amber_rounded,
+                    color: _ignoreCertificateErrors
+                        ? Theme.of(context).colorScheme.error
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                   value: _ignoreCertificateErrors,
                   onChanged: (value) {
                     setState(() {

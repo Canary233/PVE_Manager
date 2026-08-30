@@ -329,7 +329,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get apiTokenSecret => '令牌密钥';
 
   @override
-  String get allowSelfSignedCertificate => '允许自签名证书';
+  String get allowSelfSignedCertificate => '忽略 TLS 证书错误';
+
+  @override
+  String get selfSignedCertificateWarning =>
+      '此选项会关闭证书校验，可能导致凭据遭受中间人攻击。仅对确认可信的 PVE 主机启用。';
 
   @override
   String get twoFactorTitle => '需要二次验证';

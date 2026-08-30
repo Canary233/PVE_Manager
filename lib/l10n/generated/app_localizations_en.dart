@@ -331,7 +331,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get apiTokenSecret => 'Token secret';
 
   @override
-  String get allowSelfSignedCertificate => 'Allow self-signed certificate';
+  String get allowSelfSignedCertificate => 'Ignore TLS certificate errors';
+
+  @override
+  String get selfSignedCertificateWarning =>
+      'This disables certificate verification and may expose credentials to man-in-the-middle attacks. Enable it only for a trusted PVE host.';
 
   @override
   String get twoFactorTitle => 'Two-factor authentication required';

@@ -115,6 +115,27 @@ void main() {
     expect(find.byIcon(Icons.badge_rounded), findsOneWidget);
   });
 
+  testWidgets('new server form verifies TLS certificates by default', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: Locale('zh'),
+        home: Scaffold(body: ServerFormDialog()),
+      ),
+    );
+
+    final certificateSwitch = tester.widget<SwitchListTile>(
+      find.byType(SwitchListTile),
+    );
+    expect(certificateSwitch.value, isFalse);
+    expect(find.text('忽略 TLS 证书错误'), findsOneWidget);
+    expect(find.textContaining('中间人攻击'), findsOneWidget);
+    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+  });
+
   testWidgets('api token edit form reconstructs the complete token id', (
     WidgetTester tester,
   ) async {
@@ -147,5 +168,9 @@ void main() {
     expect(tokenIdFields, hasLength(1));
     expect(find.text('用户名'), findsNothing);
     expect(find.text('Realm'), findsNothing);
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      isTrue,
+    );
   });
 }
