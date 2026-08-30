@@ -85,18 +85,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<PveSnapshot> _loadSnapshot() async {
-    final resourcesResult = await _loadResources();
+    final initialResults = await Future.wait<Object>([
+      _loadResources(),
+      _loadNodes(),
+      _loadClusterStatus(),
+    ]);
+    final resourcesResult = initialResults[0] as _ResourcesLoadResult;
+    final nodesResult = initialResults[1] as _NodesLoadResult;
+    final clusterStatus = initialResults[2] as Map<String, dynamic>;
     final resources = resourcesResult.resources
         .map(widget.client.applyCachedGuestDiskUsage)
         .toList();
     unawaited(widget.client.preloadGuestDiskUsage(resources));
-    final nodesResult = await _loadNodes();
     final baseNodes = nodesResult.nodes;
     widget.client.preloadNodeThermalStates(baseNodes.map((node) => node.name));
-    final clusterStatus = await _loadClusterStatus();
-    final storagePermissionDenied = resourcesResult.fullResourceAccessDenied
-        ? await _isStoragePermissionDenied()
-        : false;
+    final storagePermissionFuture = resourcesResult.fullResourceAccessDenied
+        ? _isStoragePermissionDenied()
+        : Future.value(false);
+    final loadedNodesFuture = _loadNodeUsage(
+      baseNodes,
+      skipStatusRequests: nodesResult.permissionDenied,
+    );
+    final postLoadResults = await Future.wait<Object>([
+      storagePermissionFuture,
+      loadedNodesFuture,
+    ]);
+    final storagePermissionDenied = postLoadResults[0] as bool;
+    final loadedNodes = postLoadResults[1] as List<PveNode>;
 
     final snapshot = PveSnapshot(
       nodes: baseNodes,
@@ -104,10 +119,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       clusterStatus: clusterStatus,
       nodePermissionDenied: nodesResult.permissionDenied,
       storagePermissionDenied: storagePermissionDenied,
-    );
-    final loadedNodes = await _loadNodeUsage(
-      snapshot.nodes,
-      skipStatusRequests: nodesResult.permissionDenied,
     );
     final snapshotWithNodeUsage = PveSnapshot(
       nodes: loadedNodes,
@@ -163,6 +174,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   bool _isPermissionError(ProxmoxApiException error) {
+    final statusCode = error.values['statusCode'];
+    if (statusCode is num && statusCode == 403) {
+      return true;
+    }
     return error.message?.toLowerCase().contains('permission check failed') ??
         false;
   }
@@ -193,32 +208,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ];
     }
 
-    final statuses = await Future.wait<NodeStatus?>(
+    final results = await Future.wait<_NodeStatusLoadResult>(
       nodes.map((node) async {
         try {
-          return await widget.client.getNodeStatus(node.name);
+          return _NodeStatusLoadResult.success(
+            await widget.client.getNodeStatus(node.name),
+          );
         } on ProxmoxApiException catch (error) {
-          if (_isPermissionError(error)) {
-            return null;
-          }
-          return null;
+          return _isPermissionError(error)
+              ? const _NodeStatusLoadResult.permissionDenied()
+              : const _NodeStatusLoadResult.failed();
         } on Object {
-          return null;
+          return const _NodeStatusLoadResult.failed();
         }
       }),
     );
 
     return [
       for (var index = 0; index < nodes.length; index++)
-        if (statuses[index] case final status?)
+        if (results[index].status case final status?)
           nodes[index].copyWith(
             cpu: status.cpu,
             memoryUsed: status.memoryUsed,
             memoryTotal: status.memoryTotal,
             hasDetailPermission: true,
           )
+        else if (results[index].permissionDenied)
+          nodes[index].copyWith(hasDetailPermission: false)
         else
-          nodes[index].copyWith(hasDetailPermission: false),
+          nodes[index],
     ];
   }
 
@@ -573,6 +591,21 @@ class _NodesLoadResult {
   const _NodesLoadResult({required this.nodes, required this.permissionDenied});
 
   final List<PveNode> nodes;
+  final bool permissionDenied;
+}
+
+class _NodeStatusLoadResult {
+  const _NodeStatusLoadResult._({this.status, this.permissionDenied = false});
+
+  const _NodeStatusLoadResult.success(NodeStatus status)
+    : this._(status: status);
+
+  const _NodeStatusLoadResult.permissionDenied()
+    : this._(permissionDenied: true);
+
+  const _NodeStatusLoadResult.failed() : this._();
+
+  final NodeStatus? status;
   final bool permissionDenied;
 }
 
