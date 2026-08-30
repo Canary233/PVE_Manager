@@ -15,6 +15,7 @@ import 'package:pve_manager/data/models/paged_result.dart';
 import 'package:pve_manager/data/models/proxmox_auth_mode.dart';
 import 'package:pve_manager/data/models/pve_node.dart';
 import 'package:pve_manager/data/models/pve_resource.dart';
+import 'package:pve_manager/data/models/pve_storage.dart';
 
 import 'package:pve_manager/data/services/error_messages.dart';
 import 'package:pve_manager/data/services/proxmox_api_exception.dart';
@@ -278,6 +279,74 @@ class ProxmoxClient {
   Future<bool> canReadStorageConfig() async {
     await _request('GET', '/storage');
     return true;
+  }
+
+  Future<PveStorageStatus> getNodeStorageStatus(
+    String node,
+    String storage,
+  ) async {
+    final response = await _request(
+      'GET',
+      '/nodes/${node.trim()}/storage/${storage.trim()}',
+    );
+    final data = response['data'];
+    if (data is! Map<String, dynamic>) {
+      throw ProxmoxApiException(
+        ProxmoxErrorCode.apiFormatInvalid,
+        values: {'statusCode': 200},
+      );
+    }
+    return PveStorageStatus.fromJson(data, fallbackStorage: storage.trim());
+  }
+
+  Future<PveStorageConfig> getStorageConfig(String storage) async {
+    final normalizedStorage = storage.trim();
+    final response = await _request('GET', '/storage/$normalizedStorage');
+    final data = response['data'];
+    if (data is! Map<String, dynamic>) {
+      throw ProxmoxApiException(
+        ProxmoxErrorCode.apiFormatInvalid,
+        values: {'statusCode': 200},
+      );
+    }
+    return PveStorageConfig.fromJson(data, fallbackStorage: normalizedStorage);
+  }
+
+  Future<PveStorageDetail> getNodeStorageDetail(
+    String node,
+    String storage,
+  ) async {
+    final results = await Future.wait<Object>([
+      getNodeStorageStatus(node, storage),
+      getStorageConfig(storage),
+    ]);
+    return PveStorageDetail(
+      node: node.trim(),
+      status: results[0] as PveStorageStatus,
+      config: results[1] as PveStorageConfig,
+    );
+  }
+
+  Future<List<PveStorageContent>> getNodeStorageContent(
+    String node,
+    String storage, {
+    String? content,
+  }) async {
+    final response = await _request(
+      'GET',
+      '/nodes/${node.trim()}/storage/${storage.trim()}/content',
+      queryParameters: content == null ? null : {'content': content},
+    );
+    final data = response['data'];
+    if (data is! List) {
+      return <PveStorageContent>[];
+    }
+
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(PveStorageContent.fromJson)
+        .toList()
+      ..sort((a, b) => a.volumeId.compareTo(b.volumeId));
   }
 
   Future<NodeStatus> getNodeStatus(String node) async {

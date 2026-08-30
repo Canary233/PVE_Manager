@@ -851,6 +851,103 @@ void main() {
     expect(result.hasMore, isTrue);
     expect(result.nextStart, 40);
   });
+
+  test('loads node storage status, configuration, and content', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+
+    final requestedPaths = <String>[];
+    server.listen((request) async {
+      requestedPaths.add(request.uri.path);
+      request.response.headers.contentType = ContentType.json;
+
+      switch (request.uri.path) {
+        case '/api2/json/access/permissions':
+          request.response.write(jsonEncode({'data': {}}));
+        case '/api2/json/nodes/pve/storage/local-lvm':
+          request.response.write(
+            jsonEncode({
+              'data': {
+                'storage': 'local-lvm',
+                'type': 'lvmthin',
+                'active': 1,
+                'total': 100000,
+                'used': 40000,
+                'avail': 60000,
+                'used_fraction': 0.4,
+              },
+            }),
+          );
+        case '/api2/json/storage/local-lvm':
+          request.response.write(
+            jsonEncode({
+              'data': {
+                'storage': 'local-lvm',
+                'type': 'lvmthin',
+                'content': 'images,rootdir',
+                'shared': 0,
+                'disable': 0,
+              },
+            }),
+          );
+        case '/api2/json/nodes/pve/storage/local-lvm/content':
+          expect(request.uri.queryParameters, {'content': 'images'});
+          request.response.write(
+            jsonEncode({
+              'data': [
+                {
+                  'volid': 'local-lvm:vm-100-disk-0',
+                  'content': 'images',
+                  'format': 'raw',
+                  'size': 10737418240,
+                  'vmid': 100,
+                },
+              ],
+            }),
+          );
+        default:
+          request.response.statusCode = HttpStatus.notFound;
+          request.response.write(jsonEncode({'message': 'not found'}));
+      }
+
+      await request.response.close();
+    });
+
+    final client = ProxmoxClient(
+      origin: 'http://${server.address.address}:${server.port}',
+      username: '',
+      password: '',
+      authMode: ProxmoxAuthMode.apiToken,
+      apiTokenId: 'root@pam!mobile',
+      apiTokenSecret: 'token-secret',
+    );
+    addTearDown(client.close);
+
+    await client.login();
+    final detail = await client.getNodeStorageDetail('pve', 'local-lvm');
+    final content = await client.getNodeStorageContent(
+      'pve',
+      'local-lvm',
+      content: 'images',
+    );
+
+    expect(detail.node, 'pve');
+    expect(detail.storage, 'local-lvm');
+    expect(detail.type, 'lvmthin');
+    expect(detail.status.usedFraction, 0.4);
+    expect(detail.status.available, 60000);
+    expect(detail.contentTypes, ['images', 'rootdir']);
+    expect(content, hasLength(1));
+    expect(content.single.volumeId, 'local-lvm:vm-100-disk-0');
+    expect(content.single.vmid, 100);
+    expect(requestedPaths, contains('/api2/json/access/permissions'));
+    expect(requestedPaths, contains('/api2/json/nodes/pve/storage/local-lvm'));
+    expect(requestedPaths, contains('/api2/json/storage/local-lvm'));
+    expect(
+      requestedPaths,
+      contains('/api2/json/nodes/pve/storage/local-lvm/content'),
+    );
+  });
 }
 
 PveResource _qemuGuest() {
