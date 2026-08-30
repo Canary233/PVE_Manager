@@ -24,6 +24,10 @@ void main() {
     expect(restored.apiTokenId, 'mobile');
     expect(restored.apiTokenSecret, 'secret-uuid');
     expect(restored.accountLabel, 'alice@pve!mobile');
+
+    final databaseMap = config.toDatabaseMap();
+    expect(databaseMap['password'], isEmpty);
+    expect(databaseMap['api_token_secret'], isEmpty);
   });
 
   test('legacy server config defaults to password authentication', () {
@@ -38,6 +42,18 @@ void main() {
 
     expect(restored.authMode, ProxmoxAuthMode.password);
     expect(restored.accountLabel, 'root@pam');
+  });
+
+  test('missing certificate preference defaults to verification enabled', () {
+    final restored = PveServerConfig.fromMap({
+      'name': 'Secure default',
+      'origin': 'https://pve.example:8006',
+      'username': 'root',
+      'password': '',
+      'realm': 'pam',
+    });
+
+    expect(restored.ignoreCertificateErrors, isFalse);
   });
 
   test('normalizes a full api token identity without duplicating user id', () {

@@ -48,6 +48,7 @@ dependencies:
     git:
       url: https://github.com/leynier/xterm.dart.git
       ref: 9bfa02d74b6c2137173bf4b32002841486ea65a8
+  flutter_secure_storage: 10.0.0
 
 dev_dependencies:
   flutter_test:

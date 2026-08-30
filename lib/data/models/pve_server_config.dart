@@ -79,7 +79,7 @@ class PveServerConfig {
       password: map['password']?.toString() ?? '',
       realm: map['realm']?.toString() ?? 'pam',
       ignoreCertificateErrors:
-          (map['ignore_certificate_errors'] as int? ?? 1) == 1,
+          (map['ignore_certificate_errors'] as int? ?? 0) == 1,
       authMode: ProxmoxAuthMode.fromStorage(map['auth_type']),
       apiTokenId: map['api_token_id']?.toString() ?? '',
       apiTokenSecret: map['api_token_secret']?.toString() ?? '',
@@ -101,6 +101,14 @@ class PveServerConfig {
       'api_token_secret': apiTokenSecret,
       'last_connected_at': lastConnectedAt,
     };
+  }
+
+  /// Returns the SQLite representation without secrets.
+  Map<String, Object?> toDatabaseMap() {
+    final map = toMap();
+    map['password'] = '';
+    map['api_token_secret'] = '';
+    return map;
   }
 
   ProxmoxClient createClient() {

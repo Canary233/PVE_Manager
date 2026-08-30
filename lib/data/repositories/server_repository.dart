@@ -1,28 +1,60 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
 import 'package:pve_manager/data/models/pve_server_config.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' as ffi;
 
 class ServerRepository {
-  ServerRepository._();
+  ServerRepository._({
+    FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
+    String? databasePath,
+  }) : _secureStorage = secureStorage,
+       _databasePath = databasePath;
+
+  @visibleForTesting
+  ServerRepository.forTesting({
+    required String databasePath,
+    FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
+  }) : this._(secureStorage: secureStorage, databasePath: databasePath);
 
   static final ServerRepository instance = ServerRepository._();
 
+  final FlutterSecureStorage _secureStorage;
+  final String? _databasePath;
   sqflite.Database? _database;
+  Future<sqflite.Database>? _openingDatabase;
 
   Future<List<PveServerConfig>> getServers() async {
     final db = await _openDatabase();
     final rows = await db.query('servers', orderBy: 'updated_at DESC, id DESC');
-    return rows.map(PveServerConfig.fromMap).toList();
+    final servers = <PveServerConfig>[];
+    for (final row in rows) {
+      final server = PveServerConfig.fromMap(row);
+      final id = server.id;
+      if (id == null) {
+        servers.add(server);
+        continue;
+      }
+
+      final credentials = await _readCredentials(id);
+      servers.add(
+        server.copyWith(
+          password: credentials.password ?? server.password,
+          apiTokenSecret: credentials.apiTokenSecret ?? server.apiTokenSecret,
+        ),
+      );
+    }
+    return servers;
   }
 
   Future<PveServerConfig> saveServer(PveServerConfig server) async {
     final db = await _openDatabase();
     final now = DateTime.now().millisecondsSinceEpoch;
     final values = <String, Object?>{
-      ...server.toMap()..remove('id'),
+      ...server.toDatabaseMap()..remove('id'),
       'updated_at': now,
     };
 
@@ -31,10 +63,37 @@ class ServerRepository {
         ...values,
         'created_at': now,
       }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
+      try {
+        await _writeCredentials(id, server);
+      } on Object catch (error, stackTrace) {
+        await _restoreCredentialsBestEffort(id, const _StoredCredentials());
+        try {
+          await db.delete('servers', where: 'id = ?', whereArgs: [id]);
+        } on Object {
+          // Preserve the secure-storage failure that caused the rollback.
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }
       return server.copyWith(id: id);
     }
 
-    await db.update('servers', values, where: 'id = ?', whereArgs: [server.id]);
+    final id = server.id!;
+    final previousCredentials = await _readCredentials(id);
+    try {
+      await _writeCredentials(id, server);
+      final updated = await db.update(
+        'servers',
+        values,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (updated != 1) {
+        throw StateError('Server $id no longer exists.');
+      }
+    } on Object catch (error, stackTrace) {
+      await _restoreCredentialsBestEffort(id, previousCredentials);
+      Error.throwWithStackTrace(error, stackTrace);
+    }
     return server;
   }
 
@@ -56,7 +115,29 @@ class ServerRepository {
 
   Future<void> deleteServer(int id) async {
     final db = await _openDatabase();
-    await db.delete('servers', where: 'id = ?', whereArgs: [id]);
+    final previousCredentials = await _readCredentials(id);
+    try {
+      await _clearCredentials(id);
+      final deleted = await db.delete(
+        'servers',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (deleted != 1) {
+        throw StateError('Server $id no longer exists.');
+      }
+    } on Object catch (error, stackTrace) {
+      await _restoreCredentialsBestEffort(id, previousCredentials);
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  @visibleForTesting
+  Future<void> close() async {
+    final database = _database;
+    _database = null;
+    _openingDatabase = null;
+    await database?.close();
   }
 
   Future<sqflite.Database> _openDatabase() async {
@@ -65,10 +146,30 @@ class ServerRepository {
       return existing;
     }
 
+    final opening = _openingDatabase;
+    if (opening != null) {
+      return opening;
+    }
+
+    final future = _createDatabase();
+    _openingDatabase = future;
+    try {
+      final database = await future;
+      _database = database;
+      return database;
+    } finally {
+      if (identical(_openingDatabase, future)) {
+        _openingDatabase = null;
+      }
+    }
+  }
+
+  Future<sqflite.Database> _createDatabase() async {
     _configureDesktopDatabaseFactory();
-    final databasePath = await sqflite.getDatabasesPath();
-    final path = p.join(databasePath, 'pve_manager.db');
-    _database = await sqflite.openDatabase(
+    final path =
+        _databasePath ??
+        p.join(await sqflite.getDatabasesPath(), 'pve_manager.db');
+    final database = await sqflite.openDatabase(
       path,
       version: 3,
       onCreate: (db, version) async {
@@ -78,9 +179,9 @@ class ServerRepository {
             name TEXT NOT NULL,
             origin TEXT NOT NULL,
             username TEXT NOT NULL,
-            password TEXT NOT NULL,
+            password TEXT NOT NULL DEFAULT '',
             realm TEXT NOT NULL,
-            ignore_certificate_errors INTEGER NOT NULL DEFAULT 1,
+            ignore_certificate_errors INTEGER NOT NULL DEFAULT 0,
             auth_type TEXT NOT NULL DEFAULT 'password',
             api_token_id TEXT NOT NULL DEFAULT '',
             api_token_secret TEXT NOT NULL DEFAULT '',
@@ -109,7 +210,96 @@ class ServerRepository {
         }
       },
     );
-    return _database!;
+    try {
+      await _migrateLegacyCredentials(database);
+      return database;
+    } on Object {
+      await database.close();
+      rethrow;
+    }
+  }
+
+  Future<void> _migrateLegacyCredentials(sqflite.Database database) async {
+    final rows = await database.query(
+      'servers',
+      columns: ['id', 'password', 'api_token_secret'],
+      where: "password <> '' OR api_token_secret <> ''",
+    );
+
+    for (final row in rows) {
+      final id = row['id'] as int?;
+      if (id == null) {
+        continue;
+      }
+
+      final password = row['password']?.toString() ?? '';
+      final apiTokenSecret = row['api_token_secret']?.toString() ?? '';
+      if (password.isNotEmpty) {
+        await _migrateCredential(_passwordKey(id), password);
+      }
+      if (apiTokenSecret.isNotEmpty) {
+        await _migrateCredential(_apiTokenSecretKey(id), apiTokenSecret);
+      }
+
+      await database.update(
+        'servers',
+        {'password': '', 'api_token_secret': ''},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }
+  }
+
+  Future<void> _migrateCredential(String key, String legacyValue) async {
+    final existing = await _secureStorage.read(key: key);
+    if (existing == null || existing.isEmpty) {
+      await _secureStorage.write(key: key, value: legacyValue);
+    }
+  }
+
+  Future<_StoredCredentials> _readCredentials(int id) async {
+    return _StoredCredentials(
+      password: await _secureStorage.read(key: _passwordKey(id)),
+      apiTokenSecret: await _secureStorage.read(key: _apiTokenSecretKey(id)),
+    );
+  }
+
+  Future<void> _writeCredentials(int id, PveServerConfig server) async {
+    await _secureStorage.write(
+      key: _passwordKey(id),
+      value: server.password.isEmpty ? null : server.password,
+    );
+    await _secureStorage.write(
+      key: _apiTokenSecretKey(id),
+      value: server.apiTokenSecret.isEmpty ? null : server.apiTokenSecret,
+    );
+  }
+
+  Future<void> _clearCredentials(int id) async {
+    await _secureStorage.write(key: _passwordKey(id), value: null);
+    await _secureStorage.write(key: _apiTokenSecretKey(id), value: null);
+  }
+
+  Future<void> _restoreCredentialsBestEffort(
+    int id,
+    _StoredCredentials credentials,
+  ) async {
+    try {
+      await _secureStorage.write(
+        key: _passwordKey(id),
+        value: credentials.password,
+      );
+    } on Object {
+      // The original operation error is more useful to the caller.
+    }
+    try {
+      await _secureStorage.write(
+        key: _apiTokenSecretKey(id),
+        value: credentials.apiTokenSecret,
+      );
+    } on Object {
+      // The original operation error is more useful to the caller.
+    }
   }
 
   void _configureDesktopDatabaseFactory() {
@@ -118,4 +308,16 @@ class ServerRepository {
       sqflite.databaseFactory = ffi.databaseFactoryFfi;
     }
   }
+}
+
+String _passwordKey(int serverId) => 'pve_server_${serverId}_password';
+
+String _apiTokenSecretKey(int serverId) =>
+    'pve_server_${serverId}_api_token_secret';
+
+class _StoredCredentials {
+  const _StoredCredentials({this.password, this.apiTokenSecret});
+
+  final String? password;
+  final String? apiTokenSecret;
 }
