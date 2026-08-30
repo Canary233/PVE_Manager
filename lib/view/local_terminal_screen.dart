@@ -53,6 +53,7 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
       _TerminalConnectionState.connecting;
   String? _statusMessage;
   bool _disposed = false;
+  bool _reconnectInFlight = false;
   bool _ctrlLatch = false;
   bool _altLatch = false;
   int _toastRequestId = 0;
@@ -107,7 +108,10 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
 
   Future<void> _connect() async {
     final l10n = context.l10n;
-    _setConnectionState(_TerminalConnectionState.connecting, '连接中...');
+    _setConnectionState(
+      _TerminalConnectionState.connecting,
+      l10n.terminalConnecting,
+    );
     try {
       final apiPath = _terminalApiPath();
       final session = await _createSession();
@@ -126,7 +130,10 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
         _handleSocketMessage,
         onDone: () {
           if (!_disposed) {
-            _setConnectionState(_TerminalConnectionState.disconnected, '连接已关闭');
+            _setConnectionState(
+              _TerminalConnectionState.disconnected,
+              l10n.terminalDisconnected,
+            );
           }
         },
         onError: (Object error) {
@@ -168,6 +175,10 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
   }
 
   void _handleSocketMessage(dynamic message) {
+    if (_disposed) {
+      return;
+    }
+
     if (message is String) {
       _handleSocketText(message);
       return;
@@ -187,7 +198,10 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     if (_connectionState == _TerminalConnectionState.connecting) {
       if (!data.startsWith('OK')) {
         unawaited(_connection?.close());
-        _setConnectionState(_TerminalConnectionState.disconnected, '终端认证失败');
+        _setConnectionState(
+          _TerminalConnectionState.disconnected,
+          context.l10n.terminalAuthenticationFailed,
+        );
         return;
       }
 
@@ -210,7 +224,10 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     if (_connectionState == _TerminalConnectionState.connecting) {
       if (bytes.length < 2 || bytes[0] != 0x4f || bytes[1] != 0x4b) {
         unawaited(_connection?.close());
-        _setConnectionState(_TerminalConnectionState.disconnected, '终端认证失败');
+        _setConnectionState(
+          _TerminalConnectionState.disconnected,
+          context.l10n.terminalAuthenticationFailed,
+        );
         return;
       }
 
@@ -258,16 +275,32 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
   }
 
   Future<void> _reconnect() async {
-    _pingTimer?.cancel();
-    await _socketSubscription?.cancel();
-    _socketSubscription = null;
-    final connection = _connection;
-    _connection = null;
-    if (connection != null) {
-      await connection.close();
+    if (_reconnectInFlight || _disposed) {
+      return;
     }
-    _terminal.write('\r\n');
-    await _connect();
+
+    _reconnectInFlight = true;
+    _setConnectionState(
+      _TerminalConnectionState.connecting,
+      context.l10n.terminalReconnecting,
+    );
+    _pingTimer?.cancel();
+    try {
+      await _socketSubscription?.cancel();
+      _socketSubscription = null;
+      final connection = _connection;
+      _connection = null;
+      if (connection != null) {
+        await connection.close();
+      }
+      _terminal.write('\r\n');
+      await _connect();
+    } finally {
+      _reconnectInFlight = false;
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   Future<void> _copySelection() async {
@@ -285,7 +318,7 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     if (!mounted) {
       return;
     }
-    await _showNativeToast('已复制');
+    await _showNativeToast(context.l10n.terminalCopied);
   }
 
   Future<void> _showNativeToast(
@@ -326,7 +359,10 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     }
     // Android 13+ shows its own clipboard access overlay first. Delay the
     // requested native toast so it is not hidden behind that system overlay.
-    await _showNativeToast('已粘贴', delay: const Duration(seconds: 6));
+    await _showNativeToast(
+      context.l10n.terminalPasted,
+      delay: const Duration(seconds: 6),
+    );
   }
 
   void _sendShortcut(_TerminalShortcut shortcut) {
@@ -502,8 +538,10 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
             icon: const Icon(Icons.content_paste_rounded),
           ),
           IconButton(
-            tooltip: '重连',
-            onPressed: _connectionState == _TerminalConnectionState.connecting
+            tooltip: context.l10n.reconnect,
+            onPressed:
+                _connectionState == _TerminalConnectionState.connecting ||
+                    _reconnectInFlight
                 ? null
                 : () => unawaited(_reconnect()),
             icon: const Icon(Icons.refresh_rounded),
@@ -542,7 +580,11 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
                     ),
                   ),
                   if (_connectionState == _TerminalConnectionState.connecting)
-                    const Positioned.fill(child: _TerminalLoadingView())
+                    Positioned.fill(
+                      child: _TerminalLoadingView(
+                        label: context.l10n.terminalConnecting,
+                      ),
+                    )
                   else if (_statusMessage != null)
                     Positioned(
                       left: 12,
@@ -595,7 +637,9 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
 enum _TerminalConnectionState { connecting, connected, disconnected }
 
 class _TerminalLoadingView extends StatelessWidget {
-  const _TerminalLoadingView();
+  const _TerminalLoadingView({required this.label});
+
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -605,7 +649,7 @@ class _TerminalLoadingView extends StatelessWidget {
       color: terminalScreenBackgroundColor(colorScheme),
       child: Center(
         child: Semantics(
-          label: '连接中',
+          label: label,
           child: SizedBox.square(
             dimension: 48,
             child: CircularProgressIndicator(

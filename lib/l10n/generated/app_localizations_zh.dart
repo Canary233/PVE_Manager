@@ -242,6 +242,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get terminal => '终端';
 
   @override
+  String get terminalConnecting => '连接中...';
+
+  @override
+  String get terminalReconnecting => '正在重连...';
+
+  @override
+  String get terminalDisconnected => '连接已关闭';
+
+  @override
+  String get terminalAuthenticationFailed => '终端认证失败';
+
+  @override
+  String get terminalCopied => '已复制';
+
+  @override
+  String get terminalPasted => '已粘贴';
+
+  @override
+  String get reconnect => '重连';
+
+  @override
   String get tasksAndLogs => '任务和日志';
 
   @override

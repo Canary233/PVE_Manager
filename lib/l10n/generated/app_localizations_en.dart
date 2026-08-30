@@ -243,6 +243,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get terminal => 'Terminal';
 
   @override
+  String get terminalConnecting => 'Connecting...';
+
+  @override
+  String get terminalReconnecting => 'Reconnecting...';
+
+  @override
+  String get terminalDisconnected => 'Connection closed';
+
+  @override
+  String get terminalAuthenticationFailed => 'Terminal authentication failed';
+
+  @override
+  String get terminalCopied => 'Copied';
+
+  @override
+  String get terminalPasted => 'Pasted';
+
+  @override
+  String get reconnect => 'Reconnect';
+
+  @override
   String get tasksAndLogs => 'Tasks and logs';
 
   @override

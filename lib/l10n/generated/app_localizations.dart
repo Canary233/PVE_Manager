@@ -560,6 +560,48 @@ abstract class AppLocalizations {
   /// **'终端'**
   String get terminal;
 
+  /// No description provided for @terminalConnecting.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接中...'**
+  String get terminalConnecting;
+
+  /// No description provided for @terminalReconnecting.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在重连...'**
+  String get terminalReconnecting;
+
+  /// No description provided for @terminalDisconnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接已关闭'**
+  String get terminalDisconnected;
+
+  /// No description provided for @terminalAuthenticationFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'终端认证失败'**
+  String get terminalAuthenticationFailed;
+
+  /// No description provided for @terminalCopied.
+  ///
+  /// In zh, this message translates to:
+  /// **'已复制'**
+  String get terminalCopied;
+
+  /// No description provided for @terminalPasted.
+  ///
+  /// In zh, this message translates to:
+  /// **'已粘贴'**
+  String get terminalPasted;
+
+  /// No description provided for @reconnect.
+  ///
+  /// In zh, this message translates to:
+  /// **'重连'**
+  String get reconnect;
+
   /// No description provided for @tasksAndLogs.
   ///
   /// In zh, this message translates to:
