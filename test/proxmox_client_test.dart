@@ -864,7 +864,7 @@ void main() {
       switch (request.uri.path) {
         case '/api2/json/access/permissions':
           request.response.write(jsonEncode({'data': {}}));
-        case '/api2/json/nodes/pve/storage/local-lvm':
+        case '/api2/json/nodes/pve/storage/local-lvm/status':
           request.response.write(
             jsonEncode({
               'data': {
@@ -941,7 +941,10 @@ void main() {
     expect(content.single.volumeId, 'local-lvm:vm-100-disk-0');
     expect(content.single.vmid, 100);
     expect(requestedPaths, contains('/api2/json/access/permissions'));
-    expect(requestedPaths, contains('/api2/json/nodes/pve/storage/local-lvm'));
+    expect(
+      requestedPaths,
+      contains('/api2/json/nodes/pve/storage/local-lvm/status'),
+    );
     expect(requestedPaths, contains('/api2/json/storage/local-lvm'));
     expect(
       requestedPaths,

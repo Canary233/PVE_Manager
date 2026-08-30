@@ -287,7 +287,7 @@ class ProxmoxClient {
   ) async {
     final response = await _request(
       'GET',
-      '/nodes/${node.trim()}/storage/${storage.trim()}',
+      '/nodes/${node.trim()}/storage/${storage.trim()}/status',
     );
     final data = response['data'];
     if (data is! Map<String, dynamic>) {
