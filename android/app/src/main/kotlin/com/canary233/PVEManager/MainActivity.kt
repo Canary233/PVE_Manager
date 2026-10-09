@@ -9,6 +9,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var activeToast: Toast? = null
+    private var consoleResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -36,12 +37,20 @@ class MainActivity : FlutterActivity() {
                 result.error("INVALID_ARGUMENT", invalidArgumentsMessage, null)
                 return@setMethodCallHandler
             }
+            if (consoleResult != null) {
+                result.error("CONSOLE_BUSY", "A console is already open.", null)
+                return@setMethodCallHandler
+            }
 
             val intent = Intent(this, RemoteConsoleActivity::class.java).apply {
                 putExtra(RemoteConsoleActivity.EXTRA_TITLE, title)
                 putExtra(RemoteConsoleActivity.EXTRA_URL, url)
                 putExtra(RemoteConsoleActivity.EXTRA_COOKIE_DOMAIN, cookieDomain)
                 putExtra(RemoteConsoleActivity.EXTRA_AUTH_COOKIE, authCookie)
+                putExtra(
+                    RemoteConsoleActivity.EXTRA_AUTH_COOKIE_NAME,
+                    call.argument<String>("authCookieName") ?: "PVEAuthCookie"
+                )
                 putExtra(
                     RemoteConsoleActivity.EXTRA_TERMINAL_MODE,
                     call.argument<Boolean>("terminalMode") ?: false
@@ -64,8 +73,13 @@ class MainActivity : FlutterActivity() {
                     ignoreCertificateErrors
                 )
             }
-            startActivity(intent)
-            result.success(null)
+            consoleResult = result
+            try {
+                startActivityForResult(intent, CONSOLE_REQUEST_CODE)
+            } catch (error: Exception) {
+                consoleResult = null
+                result.error("CONSOLE_OPEN_FAILED", error.message, null)
+            }
         }
 
         MethodChannel(
@@ -135,8 +149,22 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        consoleResult?.error("CONSOLE_CLOSED", "Console host activity closed.", null)
+        consoleResult = null
         activeToast?.cancel()
         activeToast = null
         super.onDestroy()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CONSOLE_REQUEST_CODE) {
+            consoleResult?.success(null)
+            consoleResult = null
+        }
+    }
+
+    companion object {
+        private const val CONSOLE_REQUEST_CODE = 401
     }
 }

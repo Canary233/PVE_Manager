@@ -13,6 +13,7 @@ class RemoteConsoleScreen extends StatefulWidget {
     required this.title,
     required this.uri,
     required this.authCookie,
+    this.authCookieName = 'PVEAuthCookie',
     this.terminalMode = false,
     required this.ignoreCertificateErrors,
     required this.loadFailedTemplate,
@@ -25,6 +26,7 @@ class RemoteConsoleScreen extends StatefulWidget {
   final String title;
   final Uri uri;
   final String authCookie;
+  final String authCookieName;
   final bool terminalMode;
   final bool ignoreCertificateErrors;
   final String loadFailedTemplate;
@@ -152,8 +154,9 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
 
   String _buildAuthenticationBootstrapScript() {
     final cookie = [
-      'PVEAuthCookie=${widget.authCookie}',
+      '${widget.authCookieName}=${widget.authCookie}',
       'Path=/',
+      'SameSite=Strict',
       if (widget.uri.scheme == 'https') 'Secure',
     ].join('; ');
     final host = _hostWithPort(widget.uri).toLowerCase();

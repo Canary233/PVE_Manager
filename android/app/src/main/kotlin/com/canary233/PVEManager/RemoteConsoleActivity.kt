@@ -6,12 +6,14 @@ import android.content.Context
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Bundle
+import android.os.Build
 import android.os.Message
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
@@ -52,6 +54,7 @@ class RemoteConsoleActivity : Activity() {
         val title = intent.getStringExtra(EXTRA_TITLE) ?: "Console"
         val url = intent.getStringExtra(EXTRA_URL) ?: ""
         val authCookie = intent.getStringExtra(EXTRA_AUTH_COOKIE) ?: ""
+        val authCookieName = intent.getStringExtra(EXTRA_AUTH_COOKIE_NAME) ?: "PVEAuthCookie"
         cookieDomain = intent.getStringExtra(EXTRA_COOKIE_DOMAIN) ?: ""
         terminalMode = intent.getBooleanExtra(EXTRA_TERMINAL_MODE, false)
         loadFailedTemplate =
@@ -71,6 +74,17 @@ class RemoteConsoleActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(if (terminalMode) TERMINAL_BACKGROUND else 0xff000000.toInt())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setOnApplyWindowInsetsListener { view, insets ->
+                    val bars = insets.getInsets(
+                        WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+                    )
+                    view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                    insets
+                }
+            } else {
+                fitsSystemWindows = true
+            }
         }
         val toolbar = TextView(this).apply {
             text = title
@@ -159,7 +173,7 @@ class RemoteConsoleActivity : Activity() {
             } else {
                 ""
             }
-            val cookie = "PVEAuthCookie=$authCookie; Path=/$secureAttribute"
+            val cookie = "$authCookieName=$authCookie; Path=/; HttpOnly; SameSite=Strict$secureAttribute"
             val originUrl = consoleOrigin(url)
             val domainUrl = consoleDomainUrl(url, cookieDomain)
             val loadConsole = {
@@ -481,6 +495,7 @@ class RemoteConsoleActivity : Activity() {
         const val EXTRA_URL = "url"
         const val EXTRA_COOKIE_DOMAIN = "cookieDomain"
         const val EXTRA_AUTH_COOKIE = "authCookie"
+        const val EXTRA_AUTH_COOKIE_NAME = "authCookieName"
         const val EXTRA_TERMINAL_MODE = "terminalMode"
         const val EXTRA_IGNORE_CERTIFICATE_ERRORS = "ignoreCertificateErrors"
         const val EXTRA_LOAD_FAILED_TEMPLATE = "loadFailedTemplate"

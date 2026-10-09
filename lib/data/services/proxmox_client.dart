@@ -76,7 +76,19 @@ class ProxmoxClient {
       );
   String get userId =>
       usesApiToken ? _apiTokenCredentials.userId : _configuredUserId;
-  bool get supportsWebConsoleAuthentication => !usesApiToken;
+
+  Map<String, String> get consoleAuthenticationHeaders {
+    if (!hasActiveSession) {
+      throw const ProxmoxApiException(ProxmoxErrorCode.sessionExpired);
+    }
+    if (usesApiToken) {
+      return {HttpHeaders.authorizationHeader: _apiTokenAuthorizationValue};
+    }
+    return {
+      HttpHeaders.cookieHeader: 'PVEAuthCookie=$authCookieValue',
+      'CSRFPreventionToken': ?_csrfToken,
+    };
+  }
 
   ProxmoxClient forkSession() {
     if (!hasActiveSession) {
