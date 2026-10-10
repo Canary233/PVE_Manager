@@ -11,6 +11,7 @@
             android:name=".RemoteConsoleActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/ConsoleTheme" />
         <activity
             android:name=".MainActivity"

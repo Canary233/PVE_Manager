@@ -75,11 +75,20 @@ class RemoteConsoleActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(if (terminalMode) TERMINAL_BACKGROUND else 0xff000000.toInt())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Let the root apply system bar and keyboard insets once.
+                window.setDecorFitsSystemWindows(false)
                 setOnApplyWindowInsetsListener { view, insets ->
-                    val bars = insets.getInsets(
-                        WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+                    val safeInsets = insets.getInsets(
+                        WindowInsets.Type.systemBars() or
+                            WindowInsets.Type.displayCutout() or
+                            WindowInsets.Type.ime()
                     )
-                    view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                    view.setPadding(
+                        safeInsets.left,
+                        safeInsets.top,
+                        safeInsets.right,
+                        safeInsets.bottom
+                    )
                     insets
                 }
             } else {
