@@ -35,8 +35,11 @@ class _NodeTasksLogsScreenState extends State<NodeTasksLogsScreen>
   int _logsLoadId = 0;
   int _tasksStart = 0;
   int? _logsNextStart;
+  String? _logsNextCursor;
   bool _tasksLoading = false;
   bool _logsLoading = false;
+  bool _tasksLoadIsReset = true;
+  bool _logsLoadIsReset = true;
   bool _tasksHasMore = false;
   bool _logsHasMore = false;
   Object? _tasksError;
@@ -87,11 +90,7 @@ class _NodeTasksLogsScreenState extends State<NodeTasksLogsScreen>
     setState(() {
       _tasksLoading = true;
       _tasksError = null;
-      if (reset) {
-        _tasks = null;
-        _tasksStart = 0;
-        _tasksHasMore = false;
-      }
+      _tasksLoadIsReset = reset;
     });
 
     ProxmoxClient? client;
@@ -133,7 +132,8 @@ class _NodeTasksLogsScreenState extends State<NodeTasksLogsScreen>
 
     final loadId = ++_logsLoadId;
     final start = reset ? null : _logsNextStart;
-    if (!reset && start == null) {
+    final beforeCursor = reset ? null : _logsNextCursor;
+    if (!reset && start == null && beforeCursor == null) {
       return;
     }
     _logsClient?.close();
@@ -141,11 +141,7 @@ class _NodeTasksLogsScreenState extends State<NodeTasksLogsScreen>
     setState(() {
       _logsLoading = true;
       _logsError = null;
-      if (reset) {
-        _logs = null;
-        _logsNextStart = null;
-        _logsHasMore = false;
-      }
+      _logsLoadIsReset = reset;
     });
 
     ProxmoxClient? client;
@@ -153,7 +149,12 @@ class _NodeTasksLogsScreenState extends State<NodeTasksLogsScreen>
       client = widget.client.forkSession();
       _logsClient = client;
       final result = await client
-          .getNodeSyslog(widget.node.name, start: start, limit: _logPageSize)
+          .getNodeSyslog(
+            widget.node.name,
+            start: start,
+            beforeCursor: beforeCursor,
+            limit: _logPageSize,
+          )
           .timeout(_logLoadTimeout);
       if (!mounted || loadId != _logsLoadId) {
         return;
@@ -161,6 +162,7 @@ class _NodeTasksLogsScreenState extends State<NodeTasksLogsScreen>
       setState(() {
         _logs = <NodeLogEntry>[if (!reset) ...?_logs, ...result.items];
         _logsNextStart = result.nextStart;
+        _logsNextCursor = result.nextCursor;
         _logsHasMore = result.hasMore;
         _logsLoading = false;
       });
@@ -242,8 +244,10 @@ class _NodeTasksLogsScreenState extends State<NodeTasksLogsScreen>
             hasMore: _tasksHasMore,
             onLoad: () => _loadTasks(reset: true),
             onLoadMore: _loadTasks,
+            onRetry: () => _loadTasks(reset: _tasksLoadIsReset),
             onCancel: _cancelTasks,
             loadText: l10n.loadTasks,
+            progressText: _tasksLoadIsReset ? l10n.refresh : l10n.loadMore,
             loadMoreText: l10n.loadMore,
             emptyText: l10n.noTasks,
             builder: (items) => _TaskList(tasks: items),
@@ -255,8 +259,10 @@ class _NodeTasksLogsScreenState extends State<NodeTasksLogsScreen>
             hasMore: _logsHasMore,
             onLoad: () => _loadLogs(reset: true),
             onLoadMore: _loadLogs,
+            onRetry: () => _loadLogs(reset: _logsLoadIsReset),
             onCancel: _cancelLogs,
             loadText: l10n.loadLogs,
+            progressText: _logsLoadIsReset ? l10n.refresh : l10n.loadMore,
             loadMoreText: l10n.loadMore,
             emptyText: l10n.noLogs,
             builder: (items) => _LogList(logs: items),
@@ -275,8 +281,10 @@ class _AsyncList<T> extends StatelessWidget {
     required this.hasMore,
     required this.onLoad,
     required this.onLoadMore,
+    required this.onRetry,
     required this.onCancel,
     required this.loadText,
+    required this.progressText,
     required this.loadMoreText,
     required this.emptyText,
     required this.builder,
@@ -288,15 +296,18 @@ class _AsyncList<T> extends StatelessWidget {
   final bool hasMore;
   final VoidCallback onLoad;
   final VoidCallback onLoadMore;
+  final VoidCallback onRetry;
   final VoidCallback onCancel;
   final String loadText;
+  final String progressText;
   final String loadMoreText;
   final String emptyText;
   final Widget Function(List<T> items) builder;
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
+    final items = this.items;
+    if (isLoading && items == null) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -312,12 +323,10 @@ class _AsyncList<T> extends StatelessWidget {
     }
 
     final error = this.error;
-    final items = this.items;
-    final hasItems = items != null && items.isNotEmpty;
-    if (error != null && !hasItems) {
+    if (error != null && items == null) {
       return ErrorState(
         message: localizedError(context.l10n, error),
-        onRetry: onLoad,
+        onRetry: onRetry,
       );
     }
 
@@ -331,19 +340,21 @@ class _AsyncList<T> extends StatelessWidget {
       );
     }
 
-    if (items.isEmpty) {
-      return Center(child: Text(emptyText));
-    }
-
     return Column(
       children: [
-        Expanded(child: builder(items)),
+        Expanded(
+          child: items.isEmpty
+              ? Center(child: Text(emptyText))
+              : builder(items),
+        ),
         _ListFooter(
           isLoading: isLoading,
           hasMore: hasMore,
           error: error,
           onLoadMore: onLoadMore,
+          onRetry: onRetry,
           onCancel: onCancel,
+          progressText: progressText,
           loadMoreText: loadMoreText,
         ),
       ],
@@ -357,7 +368,9 @@ class _ListFooter extends StatelessWidget {
     required this.hasMore,
     required this.error,
     required this.onLoadMore,
+    required this.onRetry,
     required this.onCancel,
+    required this.progressText,
     required this.loadMoreText,
   });
 
@@ -365,7 +378,9 @@ class _ListFooter extends StatelessWidget {
   final bool hasMore;
   final Object? error;
   final VoidCallback onLoadMore;
+  final VoidCallback onRetry;
   final VoidCallback onCancel;
+  final String progressText;
   final String loadMoreText;
 
   @override
@@ -383,7 +398,7 @@ class _ListFooter extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
               const SizedBox(width: 12),
-              Text(context.l10n.loadMore),
+              Text(progressText),
               const SizedBox(width: 12),
               TextButton(onPressed: onCancel, child: Text(context.l10n.cancel)),
             ],
@@ -398,7 +413,7 @@ class _ListFooter extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
           child: FilledButton.tonalIcon(
-            onPressed: onLoadMore,
+            onPressed: onRetry,
             icon: const Icon(Icons.refresh_rounded),
             label: Text(context.l10n.retry),
           ),
@@ -432,6 +447,7 @@ class _TaskList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
+      key: const PageStorageKey<String>('node-tasks'),
       padding: const EdgeInsets.all(16),
       itemCount: tasks.length,
       separatorBuilder: (_, _) => const SizedBox(height: 8),
@@ -460,6 +476,7 @@ class _LogList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
+      key: const PageStorageKey<String>('node-logs'),
       padding: const EdgeInsets.all(16),
       itemCount: logs.length,
       separatorBuilder: (_, _) => const Divider(height: 1),

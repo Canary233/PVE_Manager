@@ -770,16 +770,98 @@ class ProxmoxClient {
     );
   }
 
+  /// Reads the newest logs, or entries preceding the returned cursor/boundary.
+  /// [start] is the exclusive upper line offset used by legacy syslog pages.
   Future<PagedResult<NodeLogEntry>> getNodeSyslog(
     String node, {
     int? start,
+    String? beforeCursor,
     int limit = 30,
   }) async {
-    if (start == null) {
-      return _getLatestNodeSyslog(node, limit: limit);
+    if (limit <= 0) {
+      throw ArgumentError.value(limit, 'limit', 'Must be positive');
+    }
+    if (start != null && beforeCursor != null) {
+      throw ArgumentError('Use a cursor or a line boundary, not both');
+    }
+    if (start != null) {
+      if (start <= 0) {
+        return const PagedResult<NodeLogEntry>(items: [], hasMore: false);
+      }
+      final pageSize = limit.clamp(1, start);
+      return _getNodeSyslogPage(node, start: start - pageSize, limit: pageSize);
     }
 
-    return _getNodeSyslogPage(node, start: start, limit: limit);
+    try {
+      return await _getNodeJournalPage(
+        node,
+        beforeCursor: beforeCursor,
+        limit: limit,
+      );
+    } on ProxmoxApiException catch (error) {
+      final status = error.values['statusCode'];
+      // Older PVE versions may not expose journal. Never mask permission,
+      // connection or pagination failures by restarting with another source.
+      if (beforeCursor != null ||
+          error.code != ProxmoxErrorCode.requestFailed ||
+          (status != HttpStatus.notFound &&
+              status != HttpStatus.notImplemented)) {
+        rethrow;
+      }
+      return _getLatestNodeSyslog(node, limit: limit);
+    }
+  }
+
+  Future<PagedResult<NodeLogEntry>> _getNodeJournalPage(
+    String node, {
+    String? beforeCursor,
+    required int limit,
+  }) async {
+    // Unlike syslog, journal seeks directly to the tail/cursor without
+    // counting all historical entries for every page.
+    final response = await _request(
+      'GET',
+      '/nodes/$node/journal',
+      queryParameters: {
+        'lastentries': '$limit',
+        'endcursor': ?beforeCursor,
+      },
+    );
+    // Streamed journal failures can still carry HTTP 200.
+    if (response['success'] == 0 || response['success'] == false) {
+      throw ProxmoxApiException(
+        ProxmoxErrorCode.requestFailed,
+        message: response['error']?.toString(),
+      );
+    }
+    final data = response['data'];
+    if (data is! List || data.any((line) => line is! String)) {
+      throw const ProxmoxApiException(ProxmoxErrorCode.apiFormatInvalid);
+    }
+    if (data.isEmpty) {
+      return const PagedResult<NodeLogEntry>(items: [], hasMore: false);
+    }
+    if (data.length < 2) {
+      throw const ProxmoxApiException(ProxmoxErrorCode.apiFormatInvalid);
+    }
+
+    // The first/last strings are opaque cursors; the middle is chronological
+    // rendered log text, matching Proxmox's JournalView wire format.
+    final oldestCursor = data.first as String;
+    final lines = data.sublist(1, data.length - 1).cast<String>();
+    final items = <NodeLogEntry>[
+      for (var index = lines.length - 1; index >= 0; index--)
+        NodeLogEntry(lineNumber: index + 1, text: lines[index]),
+    ];
+    final hasMore =
+        items.length >= limit &&
+        oldestCursor.isNotEmpty &&
+        oldestCursor != beforeCursor;
+    return PagedResult<NodeLogEntry>(
+      items: items,
+      hasMore: hasMore,
+      nextCursor: hasMore ? oldestCursor : null,
+    );
   }
 
   Future<PagedResult<NodeLogEntry>> _getLatestNodeSyslog(
@@ -799,7 +881,8 @@ class ProxmoxClient {
       );
     }
 
-    if (response.usedFallback) {
+    final total = _intValue(response.body['total']);
+    if (response.usedFallback || total <= 0) {
       final items =
           data
               .whereType<Map<String, dynamic>>()
@@ -808,14 +891,6 @@ class ProxmoxClient {
             ..sort((a, b) => b.lineNumber.compareTo(a.lineNumber));
       return PagedResult<NodeLogEntry>(
         items: items.take(limit).toList(),
-        hasMore: false,
-      );
-    }
-
-    final total = _intValue(response.body['total']);
-    if (total <= 0) {
-      return const PagedResult<NodeLogEntry>(
-        items: <NodeLogEntry>[],
         hasMore: false,
       );
     }
@@ -854,9 +929,9 @@ class ProxmoxClient {
 
     return PagedResult<NodeLogEntry>(
       items: visibleItems,
-      hasMore: !response.usedFallback && start > 0,
-      nextStart: !response.usedFallback && start > 0
-          ? (start - limit).clamp(0, start)
+      hasMore: !response.usedFallback && start > 0 && visibleItems.isNotEmpty,
+      nextStart: !response.usedFallback && start > 0 && visibleItems.isNotEmpty
+          ? start
           : null,
     );
   }

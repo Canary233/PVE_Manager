@@ -979,7 +979,7 @@ void main() {
     },
   );
 
-  test('loads the latest node syslog page after reading its total', () async {
+  test('falls back to legacy syslog when journal is unavailable', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);
 
@@ -1040,7 +1040,7 @@ void main() {
     expect(result.items.first.lineNumber, 100);
     expect(result.items.last.lineNumber, 71);
     expect(result.hasMore, isTrue);
-    expect(result.nextStart, 40);
+    expect(result.nextStart, 70);
   });
 
   test('loads node storage status, configuration, and content', () async {
