@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -117,6 +118,80 @@ void main() {
     );
 
     expect(service.checkForUpdate(), throwsA(isA<FormatException>()));
+  });
+
+  test(
+    'coalesces concurrent release requests and retries after failure',
+    () async {
+      var requestCount = 0;
+      final firstResponse = Completer<http.Response>();
+      final service = AppUpdateService(
+        client: MockClient((_) {
+          requestCount++;
+          return requestCount == 1
+              ? firstResponse.future
+              : Future.value(http.Response(jsonEncode(releaseJson()), 200));
+        }),
+        platform: TargetPlatform.android,
+        isWeb: false,
+      );
+      final first = service.fetchLatestRelease();
+      final second = service.fetchLatestRelease();
+      final results = Future.wait([
+        expectLater(first, throwsA(isA<AppUpdateException>())),
+        expectLater(second, throwsA(isA<AppUpdateException>())),
+      ]);
+      firstResponse.complete(http.Response('{}', 503));
+      await results;
+      expect(requestCount, 1);
+      expect((await service.fetchLatestRelease()).tagName, 'v1.2.0');
+      expect(requestCount, 2);
+    },
+  );
+
+  test('decodes UTF-8 release notes without a response charset', () async {
+    final service = AppUpdateService(
+      client: MockClient(
+        (_) async => http.Response.bytes(
+          utf8.encode(jsonEncode({...releaseJson(), 'body': '修复连接问题'})),
+          200,
+        ),
+      ),
+      platform: TargetPlatform.android,
+      isWeb: false,
+    );
+    expect((await service.fetchLatestRelease()).body, '修复连接问题');
+  });
+
+  test('rejects malformed semantic versions and build metadata', () {
+    for (final value in [
+      '01.2.3',
+      '1.02.3',
+      '1.2.03',
+      '1.2.3-01',
+      '1.2.3-rc.01',
+      '1.2.3+',
+      '1.2.3+build..1',
+      '1.2.3+build+extra',
+      '1.2.3+bad!',
+    ]) {
+      expect(
+        () => ReleaseVersion.parse(value),
+        throwsFormatException,
+        reason: value,
+      );
+    }
+    expect(
+      ReleaseVersion.parse('1.2.3-0alpha+build.01').toString(),
+      '1.2.3-0alpha',
+    );
+  });
+
+  test('compares prerelease numbers beyond the integer range', () {
+    final large = ReleaseVersion.parse('1.0.0-999999999999999999999999');
+    final larger = ReleaseVersion.parse('1.0.0-1000000000000000000000000');
+    expect(large.compareTo(larger), lessThan(0));
+    expect(larger.compareTo(ReleaseVersion.parse('1.0.0-alpha')), lessThan(0));
   });
 
   test('preserves the GitHub status when no release exists', () async {

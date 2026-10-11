@@ -30,6 +30,7 @@ class AppUpdateService {
   final PackageInfoLoader _packageInfoLoader;
   final TargetPlatform _platform;
   final bool _isWeb;
+  Future<GitHubRelease>? _releaseRequest;
 
   Uri get latestReleaseUri => Uri.https(
     'api.github.com',
@@ -57,7 +58,12 @@ class AppUpdateService {
     );
   }
 
-  Future<GitHubRelease> fetchLatestRelease() async {
+  Future<GitHubRelease> fetchLatestRelease() =>
+      _releaseRequest ??= _fetchLatestRelease().whenComplete(() {
+        _releaseRequest = null;
+      });
+
+  Future<GitHubRelease> _fetchLatestRelease() async {
     if (_isWeb ||
         (_platform != TargetPlatform.android &&
             _platform != TargetPlatform.windows)) {
@@ -92,7 +98,7 @@ class AppUpdateService {
     }
 
     try {
-      final decoded = jsonDecode(response.body);
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException(
           'GitHub release response is not an object.',
@@ -179,6 +185,12 @@ class ReleaseVersion implements Comparable<ReleaseVersion> {
   final int minor;
   final int patch;
   final List<String> prerelease;
+  static final _versionPattern = RegExp(
+    r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+    r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?'
+    r'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$',
+  );
+  static final _numericIdentifier = RegExp(r'^[0-9]+$');
 
   factory ReleaseVersion.parse(String value) {
     var normalized = value.trim();
@@ -189,33 +201,28 @@ class ReleaseVersion implements Comparable<ReleaseVersion> {
       throw const FormatException('Version is empty.');
     }
 
-    final withoutBuild = normalized.split('+').first;
-    final separatorIndex = withoutBuild.indexOf('-');
-    final coreText = separatorIndex == -1
-        ? withoutBuild
-        : withoutBuild.substring(0, separatorIndex);
-    final prereleaseText = separatorIndex == -1
-        ? null
-        : withoutBuild.substring(separatorIndex + 1);
-    final core = coreText.split('.');
-    if (core.length != 3 ||
-        core.any((part) => !RegExp(r'^\d+$').hasMatch(part))) {
+    final match = _versionPattern.firstMatch(normalized);
+    if (match == null) {
       throw FormatException('Invalid version: $value');
     }
 
+    final prereleaseText = match.group(4);
     final prerelease = prereleaseText != null
         ? prereleaseText.split('.')
         : const <String>[];
     if (prerelease.any(
-      (part) => part.isEmpty || !RegExp(r'^[0-9A-Za-z-]+$').hasMatch(part),
+      (part) =>
+          part.length > 1 &&
+          part.startsWith('0') &&
+          _numericIdentifier.hasMatch(part),
     )) {
       throw FormatException('Invalid version: $value');
     }
 
     return ReleaseVersion(
-      major: int.parse(core[0]),
-      minor: int.parse(core[1]),
-      patch: int.parse(core[2]),
+      major: int.parse(match.group(1)!),
+      minor: int.parse(match.group(2)!),
+      patch: int.parse(match.group(3)!),
       prerelease: List.unmodifiable(prerelease),
     );
   }
@@ -245,15 +252,17 @@ class ReleaseVersion implements Comparable<ReleaseVersion> {
       if (left == right) {
         continue;
       }
-      final leftNumber = int.tryParse(left);
-      final rightNumber = int.tryParse(right);
-      if (leftNumber != null && rightNumber != null) {
-        return leftNumber.compareTo(rightNumber);
+      final leftIsNumeric = _numericIdentifier.hasMatch(left);
+      final rightIsNumeric = _numericIdentifier.hasMatch(right);
+      if (leftIsNumeric && rightIsNumeric) {
+        // Compare digit strings so arbitrarily long identifiers never overflow.
+        final lengthComparison = left.length.compareTo(right.length);
+        return lengthComparison != 0 ? lengthComparison : left.compareTo(right);
       }
-      if (leftNumber != null) {
+      if (leftIsNumeric) {
         return -1;
       }
-      if (rightNumber != null) {
+      if (rightIsNumeric) {
         return 1;
       }
       return left.compareTo(right);
