@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,196 @@ import 'package:pve_manager/data/services/proxmox_api_exception.dart';
 import 'package:pve_manager/data/services/proxmox_client.dart';
 
 void main() {
+  test(
+    'rejects malformed login credentials without creating a session',
+    () async {
+      for (final data in [
+        {'ticket': 'ticket'},
+        {'ticket': '', 'CSRFPreventionToken': 'csrf'},
+        {'ticket': 123, 'CSRFPreventionToken': 'csrf'},
+      ]) {
+        final client = await _clientFor((request) async {
+          await request.drain<void>();
+          request.response.write(jsonEncode({'data': data}));
+          await request.response.close();
+        });
+        await expectLater(client.login(), throwsA(isA<ProxmoxApiException>()));
+        expect(client.hasActiveSession, isFalse);
+      }
+    },
+  );
+
+  test('clears an authenticated session for non-JSON 401 responses', () async {
+    final client = await _clientFor((request) async {
+      if (request.uri.path.endsWith('/access/ticket')) {
+        await _loginResponse(request);
+      } else {
+        request.response.statusCode = HttpStatus.unauthorized;
+        request.response.write('<html>Authentication required</html>');
+        await request.response.close();
+      }
+    });
+    await client.login();
+    await expectLater(
+      client.getResources(),
+      throwsA(
+        isA<ProxmoxApiException>().having(
+          (error) => error.code,
+          'code',
+          ProxmoxErrorCode.sessionExpired,
+        ),
+      ),
+    );
+    expect(client.hasActiveSession, isFalse);
+  });
+
+  test(
+    'an old request cannot invalidate a newly authenticated session',
+    () async {
+      final received = Completer<HttpRequest>();
+      var loginCount = 0;
+      final client = await _clientFor((request) async {
+        if (request.uri.path.endsWith('/access/ticket')) {
+          await _loginResponse(request, ticket: 'ticket-${++loginCount}');
+        } else {
+          received.complete(request);
+        }
+      });
+      await client.login();
+      final firstRequest = client.getResources();
+      final expiredRequest = await received.future;
+      await client.login();
+      final rejected = expectLater(
+        firstRequest,
+        throwsA(isA<ProxmoxApiException>()),
+      );
+      expiredRequest.response.statusCode = HttpStatus.unauthorized;
+      expiredRequest.response.write('{"message":"expired"}');
+      await expiredRequest.response.close();
+      await rejected;
+      expect(client.hasActiveSession, isTrue);
+      expect(client.authCookieValue, 'ticket-2');
+    },
+  );
+
+  test(
+    'closing a client invalidates its session and console credentials',
+    () async {
+      final client = await _clientFor(_loginResponse);
+      await client.login();
+      client.close();
+      expect(client.hasActiveSession, isFalse);
+      expect(
+        () => client.consoleAuthenticationHeaders,
+        throwsA(isA<ProxmoxApiException>()),
+      );
+      expect(() => client.forkSession(), throwsA(isA<ProxmoxApiException>()));
+      await expectLater(
+        client.getResources(),
+        throwsA(isA<ProxmoxApiException>()),
+      );
+    },
+  );
+
+  test(
+    'expired telemetry is fetched again and is not exposed as fresh',
+    () async {
+      var thermalRequests = 0;
+      var diskRequests = 0;
+      final client = await _clientFor((request) async {
+        if (request.uri.path.endsWith('/access/ticket')) {
+          await _loginResponse(request);
+          return;
+        }
+        final Object data;
+        if (request.uri.path.endsWith('/status')) {
+          thermalRequests++;
+          data = {
+            'thermalstate': {
+              'Package id 0': {'temp1_input': 40 + thermalRequests},
+            },
+          };
+        } else if (request.uri.path.endsWith('/disks/list')) {
+          data = [];
+        } else {
+          diskRequests++;
+          data = {
+            'result': [
+              {
+                'mountpoint': '/',
+                'type': 'ext4',
+                'used-bytes': diskRequests,
+                'total-bytes': 100,
+              },
+            ],
+          };
+        }
+        request.response.write(jsonEncode({'data': data}));
+        await request.response.close();
+      }, telemetryCacheDuration: Duration.zero);
+      await client.login();
+      expect(
+        (await client.getNodeThermalState('pve')).cpuPackageSensor?.celsius,
+        41,
+      );
+      expect(
+        (await client.getNodeThermalState('pve')).cpuPackageSensor?.celsius,
+        42,
+      );
+      expect(client.cachedNodeThermalState('pve'), isNull);
+      await client.preloadGuestDiskUsage([_qemuGuest()]);
+      await client.preloadGuestDiskUsage([_qemuGuest()]);
+      expect(diskRequests, 2);
+      expect(
+        identical(client.applyCachedGuestDiskUsage(_qemuGuest()), _qemuGuest()),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'concurrent preload callers await the shared guest disk request',
+    () async {
+      final received = Completer<HttpRequest>();
+      var diskRequests = 0;
+      final client = await _clientFor((request) async {
+        if (request.uri.path.endsWith('/access/ticket')) {
+          await _loginResponse(request);
+        } else {
+          diskRequests++;
+          received.complete(request);
+        }
+      });
+      await client.login();
+      final first = client.preloadGuestDiskUsage([_qemuGuest()]);
+      final request = await received.future;
+      var secondCompleted = false;
+      final second = client.preloadGuestDiskUsage([_qemuGuest()]).then((_) {
+        secondCompleted = true;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(secondCompleted, isFalse);
+      request.response.write(
+        jsonEncode({
+          'data': {
+            'result': [
+              {
+                'mountpoint': '/',
+                'type': 'ext4',
+                'used-bytes': 25,
+                'total-bytes': 100,
+              },
+            ],
+          },
+        }),
+      );
+      await request.response.close();
+      await Future.wait([first, second]);
+      expect(diskRequests, 1);
+      expect(client.applyCachedGuestDiskUsage(_qemuGuest()).diskUsed, 25);
+    },
+  );
+
   test(
     'api token login uses authorization header without ticket or csrf',
     () async {
@@ -951,6 +1142,36 @@ void main() {
       contains('/api2/json/nodes/pve/storage/local-lvm/content'),
     );
   });
+}
+
+Future<ProxmoxClient> _clientFor(
+  Future<void> Function(HttpRequest) handle, {
+  Duration telemetryCacheDuration = const Duration(seconds: 30),
+}) async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  addTearDown(() => server.close(force: true));
+  server.listen(handle);
+  final client = ProxmoxClient(
+    origin: 'http://${server.address.address}:${server.port}',
+    username: 'root',
+    password: 'secret',
+    telemetryCacheDuration: telemetryCacheDuration,
+  );
+  addTearDown(client.close);
+  return client;
+}
+
+Future<void> _loginResponse(
+  HttpRequest request, {
+  String ticket = 'ticket',
+}) async {
+  await request.drain<void>();
+  request.response.write(
+    jsonEncode({
+      'data': {'ticket': ticket, 'CSRFPreventionToken': 'csrf'},
+    }),
+  );
+  await request.response.close();
 }
 
 PveResource _qemuGuest() {

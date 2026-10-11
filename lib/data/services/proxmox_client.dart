@@ -30,6 +30,7 @@ class ProxmoxClient {
     this.apiTokenId = '',
     this.apiTokenSecret = '',
     this.ignoreCertificateErrors = false,
+    this.telemetryCacheDuration = const Duration(seconds: 30),
   }) : _httpClient = HttpClient() {
     _httpClient.connectionTimeout = const Duration(seconds: 15);
     _httpClient.badCertificateCallback =
@@ -45,16 +46,20 @@ class ProxmoxClient {
   final String apiTokenId;
   final String apiTokenSecret;
   final bool ignoreCertificateErrors;
+  final Duration telemetryCacheDuration;
   final HttpClient _httpClient;
+  final Stopwatch _cacheClock = Stopwatch()..start();
+  bool _closed = false;
+  int _sessionGeneration = 0;
   String? _ticket;
   String? _csrfToken;
   bool _apiTokenAuthenticated = false;
-  final Map<String, NodeThermalState> _nodeThermalStateCache =
-      <String, NodeThermalState>{};
+  final Map<String, _CachedTelemetry<NodeThermalState>> _nodeThermalStateCache =
+      <String, _CachedTelemetry<NodeThermalState>>{};
   final Map<String, Future<NodeThermalState>> _nodeThermalStateRequests =
       <String, Future<NodeThermalState>>{};
-  final Map<String, _GuestDiskUsage> _guestDiskUsageCache =
-      <String, _GuestDiskUsage>{};
+  final Map<String, _CachedTelemetry<_GuestDiskUsage>> _guestDiskUsageCache =
+      <String, _CachedTelemetry<_GuestDiskUsage>>{};
   final Map<String, Future<_GuestDiskUsage?>> _guestDiskUsageRequests =
       <String, Future<_GuestDiskUsage?>>{};
 
@@ -63,7 +68,7 @@ class ProxmoxClient {
   String get displayHost => Uri.parse(origin).host;
   bool get usesApiToken => authMode == ProxmoxAuthMode.apiToken;
   bool get hasActiveSession =>
-      usesApiToken ? _apiTokenAuthenticated : _ticket != null;
+      !_closed && (usesApiToken ? _apiTokenAuthenticated : _ticket != null);
   String get host => Uri.parse(origin).host;
   String get _configuredUserId =>
       username.contains('@') ? username : '$username@$realm';
@@ -104,6 +109,7 @@ class ProxmoxClient {
         apiTokenId: apiTokenId,
         apiTokenSecret: apiTokenSecret,
         ignoreCertificateErrors: ignoreCertificateErrors,
+        telemetryCacheDuration: telemetryCacheDuration,
       )
       .._ticket = _ticket
       .._csrfToken = _csrfToken
@@ -170,6 +176,7 @@ class ProxmoxClient {
   Future<void> login({String? tfaChallenge, String? tfaResponse}) async {
     if (usesApiToken) {
       await _request('GET', '/access/permissions');
+      _sessionGeneration++;
       _apiTokenAuthenticated = true;
       return;
     }
@@ -373,8 +380,8 @@ class ProxmoxClient {
   }
 
   Future<NodeThermalState> getNodeThermalState(String node) async {
-    final cached = _nodeThermalStateCache[node];
-    if (cached != null && !cached.isEmpty) {
+    final cached = cachedNodeThermalState(node);
+    if (cached != null) {
       return cached;
     }
 
@@ -390,10 +397,10 @@ class ProxmoxClient {
 
   NodeThermalState? cachedNodeThermalState(String node) {
     final cached = _nodeThermalStateCache[node];
-    if (cached == null || cached.isEmpty) {
+    if (cached == null || !_isFresh(cached) || cached.value.isEmpty) {
       return null;
     }
-    return cached;
+    return cached.value;
   }
 
   void preloadNodeThermalStates(Iterable<String> nodes) {
@@ -403,7 +410,7 @@ class ProxmoxClient {
         .toSet();
 
     for (final node in uniqueNodes) {
-      if (_nodeThermalStateCache.containsKey(node) ||
+      if (cachedNodeThermalState(node) != null ||
           _nodeThermalStateRequests.containsKey(node)) {
         continue;
       }
@@ -444,9 +451,7 @@ class ProxmoxClient {
       }
 
       final key = _guestDiskUsageCacheKey(guest);
-      if (key == null ||
-          _guestDiskUsageCache.containsKey(key) ||
-          _guestDiskUsageRequests.containsKey(key)) {
+      if (key == null || _cachedGuestDiskUsage(guest) != null) {
         continue;
       }
 
@@ -472,7 +477,7 @@ class ProxmoxClient {
     try {
       final thermalState = await _fetchNodeThermalStateFromApi(node);
       if (!thermalState.isEmpty) {
-        _nodeThermalStateCache[node] = thermalState;
+        _nodeThermalStateCache[node] = _cache(thermalState);
       }
       return thermalState;
     } finally {
@@ -636,7 +641,7 @@ class ProxmoxClient {
     }
 
     if (useCached) {
-      final cached = _guestDiskUsageCache[key];
+      final cached = _cachedGuestDiskUsage(guest);
       if (cached != null) {
         return cached;
       }
@@ -663,13 +668,11 @@ class ProxmoxClient {
       );
       final usage = _parseGuestAgentDiskUsage(response['data']);
       if (usage != null) {
-        _guestDiskUsageCache[key] = usage;
+        _guestDiskUsageCache[key] = _cache(usage);
       }
       return usage;
-    } on ProxmoxApiException {
-      return _guestDiskUsageCache[key];
     } on Object {
-      return _guestDiskUsageCache[key];
+      return _cachedGuestDiskUsage(guest);
     } finally {
       _guestDiskUsageRequests.remove(key);
     }
@@ -958,7 +961,22 @@ class ProxmoxClient {
   }
 
   void close() {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    _clearSession();
+    _nodeThermalStateCache.clear();
+    _guestDiskUsageCache.clear();
+    _cacheClock.stop();
     _httpClient.close(force: true);
+  }
+
+  void _clearSession() {
+    _sessionGeneration++;
+    _ticket = null;
+    _csrfToken = null;
+    _apiTokenAuthenticated = false;
   }
 
   Future<NodeTerminalSession> _createTerminalSession(String apiPath) async {
@@ -981,39 +999,56 @@ class ProxmoxClient {
     String? authTicket,
     String? csrfToken,
   }) async {
-    final uri = _apiUri(path, queryParameters: queryParameters);
-    final request = await _httpClient
-        .openUrl(method, uri)
-        .timeout(_requestTimeout);
-    request.followRedirects = false;
-    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+    if (_closed ||
+        (needsAuth && !usesApiToken && authTicket == null && _ticket == null)) {
+      throw const ProxmoxApiException(ProxmoxErrorCode.sessionExpired);
+    }
+    final sessionGeneration = _sessionGeneration;
+    final usesSession = needsAuth && authTicket == null && hasActiveSession;
+    final headers = <String, String>{
+      HttpHeaders.acceptHeader: 'application/json',
+    };
 
     if (needsAuth) {
       if (authTicket != null) {
-        request.headers.set(
-          HttpHeaders.cookieHeader,
-          'PVEAuthCookie=$authTicket',
-        );
+        headers[HttpHeaders.cookieHeader] = 'PVEAuthCookie=$authTicket';
         if (method != 'GET' && csrfToken != null) {
-          request.headers.set('CSRFPreventionToken', csrfToken);
+          headers['CSRFPreventionToken'] = csrfToken;
         }
       } else if (usesApiToken) {
-        request.headers.set(
-          HttpHeaders.authorizationHeader,
-          _apiTokenAuthorizationValue,
-        );
+        headers[HttpHeaders.authorizationHeader] = _apiTokenAuthorizationValue;
       } else {
         final ticket = _ticket;
         if (ticket == null) {
           throw const ProxmoxApiException(ProxmoxErrorCode.sessionExpired);
         }
-        request.headers.set(HttpHeaders.cookieHeader, 'PVEAuthCookie=$ticket');
+        headers[HttpHeaders.cookieHeader] = 'PVEAuthCookie=$ticket';
         final token = csrfToken ?? _csrfToken;
         if (method != 'GET' && token != null) {
-          request.headers.set('CSRFPreventionToken', token);
+          headers['CSRFPreventionToken'] = token;
         }
       }
     }
+
+    final uri = _apiUri(path, queryParameters: queryParameters);
+    var abandoned = false;
+    final opening = _httpClient.openUrl(method, uri).then((request) {
+      if (abandoned) {
+        // A Future timeout does not cancel the underlying connection attempt.
+        request.done.ignore();
+        request.abort();
+      }
+      return request;
+    });
+    final request = await opening.timeout(
+      _requestTimeout,
+      onTimeout: () {
+        abandoned = true;
+        throw TimeoutException('Proxmox connection timed out.');
+      },
+    );
+    request.followRedirects = false;
+    headers.forEach(request.headers.set);
 
     if (body != null) {
       final payload = Uri(queryParameters: body).query;
@@ -1029,11 +1064,26 @@ class ProxmoxClient {
       request.contentLength = 0;
     }
 
-    final response = await request.close().timeout(_requestTimeout);
+    final response = await request.close().timeout(
+      _requestTimeout,
+      onTimeout: () {
+        final error = TimeoutException('Proxmox request timed out.');
+        request.abort(error);
+        throw error;
+      },
+    );
+    if (response.statusCode == HttpStatus.unauthorized && usesSession) {
+      if (_sessionGeneration == sessionGeneration) {
+        _clearSession();
+      }
+      await response.listen(null).cancel();
+      throw const ProxmoxApiException(ProxmoxErrorCode.sessionExpired);
+    }
+
     final content = await response
         .transform(utf8.decoder)
-        .join()
-        .timeout(_requestTimeout);
+        .timeout(_requestTimeout)
+        .join();
 
     if (response.isRedirect) {
       final location = response.headers.value(HttpHeaders.locationHeader);
@@ -1060,15 +1110,6 @@ class ProxmoxClient {
       );
     }
 
-    if (response.statusCode == HttpStatus.unauthorized &&
-        needsAuth &&
-        hasActiveSession) {
-      _ticket = null;
-      _csrfToken = null;
-      _apiTokenAuthenticated = false;
-      throw const ProxmoxApiException(ProxmoxErrorCode.sessionExpired);
-    }
-
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final message = decoded['message']?.toString();
       throw ProxmoxApiException(
@@ -1090,12 +1131,17 @@ class ProxmoxClient {
   }
 
   void _storeLoginData(Map<String, dynamic> data) {
-    _ticket = data['ticket']?.toString();
-    _csrfToken = data['CSRFPreventionToken']?.toString();
-
-    if (_ticket == null || _csrfToken == null) {
+    final ticket = data['ticket'];
+    final csrfToken = data['CSRFPreventionToken'];
+    if (ticket is! String ||
+        ticket.isEmpty ||
+        csrfToken is! String ||
+        csrfToken.isEmpty) {
       throw const ProxmoxApiException(ProxmoxErrorCode.loginTicketMissing);
     }
+    _ticket = ticket;
+    _csrfToken = csrfToken;
+    _sessionGeneration++;
   }
 
   Uri _apiUri(String path, {Map<String, String>? queryParameters}) {
@@ -1167,8 +1213,15 @@ class ProxmoxClient {
     if (key == null) {
       return null;
     }
-    return _guestDiskUsageCache[key];
+    final cached = _guestDiskUsageCache[key];
+    return cached != null && _isFresh(cached) ? cached.value : null;
   }
+
+  _CachedTelemetry<T> _cache<T>(T value) =>
+      _CachedTelemetry(value, _cacheClock.elapsed + telemetryCacheDuration);
+
+  bool _isFresh<T>(_CachedTelemetry<T> cached) =>
+      !_closed && _cacheClock.elapsed < cached.expiresAt;
 
   static bool _shouldLoadGuestDiskUsage(PveResource guest) {
     return guest.type == 'qemu' &&
@@ -1426,6 +1479,13 @@ class _GuestDiskUsage {
 
   final int used;
   final int total;
+}
+
+class _CachedTelemetry<T> {
+  const _CachedTelemetry(this.value, this.expiresAt);
+
+  final T value;
+  final Duration expiresAt;
 }
 
 class ProxmoxTerminalConnection {
