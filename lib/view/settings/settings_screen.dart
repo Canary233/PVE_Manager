@@ -22,7 +22,7 @@ class SettingsScreen extends StatefulWidget {
   final Locale locale;
   final ValueChanged<Locale> onLocaleChanged;
   final ValueListenable<Duration> autoRefreshIntervalListenable;
-  final ValueChanged<Duration> onAutoRefreshIntervalChanged;
+  final AsyncValueSetter<Duration> onAutoRefreshIntervalChanged;
   final AppUpdateService? updateService;
   final bool embedded;
 
@@ -36,6 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   late Duration _autoRefreshInterval;
   bool _isCheckingForUpdates = false;
+  bool _isSavingRefreshInterval = false;
 
   @override
   void initState() {
@@ -111,7 +112,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _refreshIntervalLabel(context, _autoRefreshInterval),
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => _showRefreshIntervalPicker(context),
+                  onTap: _isSavingRefreshInterval
+                      ? null
+                      : () => _showRefreshIntervalPicker(context),
                 ),
               ),
               const SizedBox(height: 12),
@@ -198,7 +201,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final languages = <Locale>[_zhLocale, _enLocale];
 
         return SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -250,7 +253,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
     );
 
-    if (selectedLocale == null ||
+    if (!mounted ||
+        selectedLocale == null ||
         _sameLanguage(selectedLocale, currentLocale)) {
       return;
     }
@@ -267,7 +271,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final l10n = context.l10n;
 
         return SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -316,14 +320,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
     );
 
-    if (selectedInterval == null || selectedInterval == _autoRefreshInterval) {
+    if (!mounted ||
+        selectedInterval == null ||
+        selectedInterval == _autoRefreshInterval) {
       return;
     }
 
     setState(() {
-      _autoRefreshInterval = selectedInterval;
+      _isSavingRefreshInterval = true;
     });
-    widget.onAutoRefreshIntervalChanged(selectedInterval);
+    try {
+      await widget.onAutoRefreshIntervalChanged(selectedInterval);
+      if (mounted) {
+        setState(() => _autoRefreshInterval = selectedInterval);
+      }
+    } on Object catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizedError(context.l10n, error))),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSavingRefreshInterval = false);
+      }
+    }
   }
 
   Future<void> _checkForUpdates() async {

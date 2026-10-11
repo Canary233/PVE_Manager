@@ -27,11 +27,12 @@ class _PveManagerAppState extends State<PveManagerApp> {
   );
   ColorScheme? _lightDynamic;
   ColorScheme? _darkDynamic;
+  bool _settingsChanged = false;
 
   @override
   void initState() {
     super.initState();
-    _loadSettings();
+    unawaited(_loadSettings());
     unawaited(_loadDynamicColors());
   }
 
@@ -47,12 +48,15 @@ class _PveManagerAppState extends State<PveManagerApp> {
   }
 
   Future<void> _loadSettings() async {
-    final autoRefreshInterval = await _settingsRepository
-        .getAutoRefreshInterval();
-    if (!mounted) {
-      return;
+    try {
+      final autoRefreshInterval = await _settingsRepository
+          .getAutoRefreshInterval();
+      if (mounted && !_settingsChanged) {
+        _autoRefreshInterval.value = autoRefreshInterval;
+      }
+    } on Object {
+      // Keep the default interval if platform preferences are unavailable.
     }
-    _autoRefreshInterval.value = autoRefreshInterval;
   }
 
   void _setLocale(Locale locale) {
@@ -65,11 +69,11 @@ class _PveManagerAppState extends State<PveManagerApp> {
   }
 
   Future<void> _setAutoRefreshInterval(Duration interval) async {
-    if (_autoRefreshInterval.value == interval) {
-      return;
-    }
-    _autoRefreshInterval.value = interval;
     await _settingsRepository.setAutoRefreshInterval(interval);
+    _settingsChanged = true;
+    if (mounted) {
+      _autoRefreshInterval.value = interval;
+    }
   }
 
   @override

@@ -32,7 +32,7 @@ class HomeScreen extends StatefulWidget {
   final Locale locale;
   final ValueChanged<Locale> onLocaleChanged;
   final ValueListenable<Duration> autoRefreshIntervalListenable;
-  final ValueChanged<Duration> onAutoRefreshIntervalChanged;
+  final AsyncValueSetter<Duration> onAutoRefreshIntervalChanged;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -117,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => ServerFormDialog(server: server),
     );
 
-    if (result == null) {
+    if (result == null || !mounted) {
       return;
     }
 
@@ -137,7 +137,12 @@ class _HomeScreenState extends State<HomeScreen> {
         if (index == null) {
           _servers.insert(0, saved);
         } else {
-          _servers[index] = saved;
+          final currentIndex = _servers.indexWhere(
+            (item) => item.id == saved.id,
+          );
+          if (currentIndex != -1) {
+            _servers[currentIndex] = saved;
+          }
         }
       });
     } on Object catch (error) {
@@ -198,7 +203,9 @@ class _HomeScreenState extends State<HomeScreen> {
             return;
           }
           setState(() {
-            _servers.removeAt(index);
+            _servers.removeWhere(
+              (item) => _serverKey(item) == _serverKey(server),
+            );
             _error = null;
           });
         } on Object catch (error) {
@@ -303,6 +310,10 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
       final connectedServer = await _repository.markConnected(server);
+      if (!mounted) {
+        client.close();
+        return;
+      }
       setState(() {
         final index = _servers.indexWhere((item) => item.id == server.id);
         if (index != -1) {
@@ -311,10 +322,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _isLoading = false;
         _connectingServerKey = null;
       });
-      if (!mounted) {
-        client.close();
-        return;
-      }
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => DashboardScreen(

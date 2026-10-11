@@ -26,8 +26,11 @@ class ServerRepository {
   final String? _databasePath;
   sqflite.Database? _database;
   Future<sqflite.Database>? _openingDatabase;
+  Future<void> _pendingOperation = Future<void>.value();
 
-  Future<List<PveServerConfig>> getServers() async {
+  Future<List<PveServerConfig>> getServers() => _runExclusive(_getServers);
+
+  Future<List<PveServerConfig>> _getServers() async {
     final db = await _openDatabase();
     final rows = await db.query('servers', orderBy: 'updated_at DESC, id DESC');
     final servers = <PveServerConfig>[];
@@ -50,7 +53,10 @@ class ServerRepository {
     return servers;
   }
 
-  Future<PveServerConfig> saveServer(PveServerConfig server) async {
+  Future<PveServerConfig> saveServer(PveServerConfig server) =>
+      _runExclusive(() => _saveServer(server));
+
+  Future<PveServerConfig> _saveServer(PveServerConfig server) async {
     final db = await _openDatabase();
     final now = DateTime.now().millisecondsSinceEpoch;
     final values = <String, Object?>{
@@ -97,7 +103,10 @@ class ServerRepository {
     return server;
   }
 
-  Future<PveServerConfig> markConnected(PveServerConfig server) async {
+  Future<PveServerConfig> markConnected(PveServerConfig server) =>
+      _runExclusive(() => _markConnected(server));
+
+  Future<PveServerConfig> _markConnected(PveServerConfig server) async {
     final db = await _openDatabase();
     final now = DateTime.now().millisecondsSinceEpoch;
 
@@ -113,7 +122,9 @@ class ServerRepository {
     return server.copyWith(lastConnectedAt: now);
   }
 
-  Future<void> deleteServer(int id) async {
+  Future<void> deleteServer(int id) => _runExclusive(() => _deleteServer(id));
+
+  Future<void> _deleteServer(int id) async {
     final db = await _openDatabase();
     final previousCredentials = await _readCredentials(id);
     try {
@@ -133,11 +144,24 @@ class ServerRepository {
   }
 
   @visibleForTesting
-  Future<void> close() async {
+  Future<void> close() => _runExclusive(_close);
+
+  Future<void> _close() async {
     final database = _database;
     _database = null;
     _openingDatabase = null;
     await database?.close();
+  }
+
+  Future<T> _runExclusive<T>(Future<T> Function() operation) {
+    // SQLite and secure storage cannot share a transaction. Keep reads, writes,
+    // and rollback together so callers never observe or overwrite partial data.
+    final result = _pendingOperation.then((_) => operation());
+    _pendingOperation = result.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {},
+    );
+    return result;
   }
 
   Future<sqflite.Database> _openDatabase() async {
@@ -165,15 +189,16 @@ class ServerRepository {
   }
 
   Future<sqflite.Database> _createDatabase() async {
-    _configureDesktopDatabaseFactory();
+    final databaseFactory = _getDatabaseFactory();
     final path =
         _databasePath ??
-        p.join(await sqflite.getDatabasesPath(), 'pve_manager.db');
-    final database = await sqflite.openDatabase(
+        p.join(await databaseFactory.getDatabasesPath(), 'pve_manager.db');
+    final database = await databaseFactory.openDatabase(
       path,
-      version: 3,
-      onCreate: (db, version) async {
-        await db.execute('''
+      options: sqflite.OpenDatabaseOptions(
+        version: 3,
+        onCreate: (db, version) async {
+          await db.execute('''
           CREATE TABLE servers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -190,25 +215,26 @@ class ServerRepository {
             updated_at INTEGER NOT NULL
           )
         ''');
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          await db.execute(
-            'ALTER TABLE servers ADD COLUMN last_connected_at INTEGER',
-          );
-        }
-        if (oldVersion < 3) {
-          await db.execute(
-            "ALTER TABLE servers ADD COLUMN auth_type TEXT NOT NULL DEFAULT 'password'",
-          );
-          await db.execute(
-            "ALTER TABLE servers ADD COLUMN api_token_id TEXT NOT NULL DEFAULT ''",
-          );
-          await db.execute(
-            "ALTER TABLE servers ADD COLUMN api_token_secret TEXT NOT NULL DEFAULT ''",
-          );
-        }
-      },
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await db.execute(
+              'ALTER TABLE servers ADD COLUMN last_connected_at INTEGER',
+            );
+          }
+          if (oldVersion < 3) {
+            await db.execute(
+              "ALTER TABLE servers ADD COLUMN auth_type TEXT NOT NULL DEFAULT 'password'",
+            );
+            await db.execute(
+              "ALTER TABLE servers ADD COLUMN api_token_id TEXT NOT NULL DEFAULT ''",
+            );
+            await db.execute(
+              "ALTER TABLE servers ADD COLUMN api_token_secret TEXT NOT NULL DEFAULT ''",
+            );
+          }
+        },
+      ),
     );
     try {
       await _migrateLegacyCredentials(database);
@@ -302,11 +328,12 @@ class ServerRepository {
     }
   }
 
-  void _configureDesktopDatabaseFactory() {
+  sqflite.DatabaseFactory _getDatabaseFactory() {
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
       ffi.sqfliteFfiInit();
-      sqflite.databaseFactory = ffi.databaseFactoryFfi;
+      return ffi.databaseFactoryFfi;
     }
+    return sqflite.databaseFactory;
   }
 }
 

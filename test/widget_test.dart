@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -192,7 +194,7 @@ void main() {
           locale: const Locale('zh'),
           onLocaleChanged: (_) {},
           autoRefreshIntervalListenable: autoRefreshInterval,
-          onAutoRefreshIntervalChanged: (_) {},
+          onAutoRefreshIntervalChanged: (_) async {},
         ),
       ),
     );
@@ -201,6 +203,38 @@ void main() {
     expect(find.text('检查更新'), findsOneWidget);
     expect(find.text('从 GitHub 获取最新版本'), findsOneWidget);
     expect(find.byIcon(Icons.system_update_alt_rounded), findsOneWidget);
+  });
+
+  testWidgets('settings retains the saved interval when persistence fails', (
+    WidgetTester tester,
+  ) async {
+    final interval = ValueNotifier(const Duration(seconds: 5));
+    addTearDown(interval.dispose);
+    final save = Completer<void>();
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('en'),
+        home: SettingsScreen(
+          locale: const Locale('en'),
+          onLocaleChanged: (_) {},
+          autoRefreshIntervalListenable: interval,
+          onAutoRefreshIntervalChanged: (_) => save.future,
+        ),
+      ),
+    );
+    await tester.tap(find.byIcon(Icons.sync_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('10s'));
+    await tester.pumpAndSettle();
+    expect(find.text('5s'), findsOneWidget);
+    save.completeError(StateError('settings write failed'));
+    await tester.pumpAndSettle();
+    expect(find.text('5s'), findsOneWidget);
+    expect(find.byType(SnackBar), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('storage list opens storage details when tapped', (

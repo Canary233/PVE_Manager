@@ -1,8 +1,5 @@
 class GuestConfig {
-  const GuestConfig({
-    required this.values,
-    required this.editSchema,
-  });
+  const GuestConfig({required this.values, required this.editSchema});
 
   final Map<String, String> values;
   final GuestConfigEditSchema editSchema;
@@ -92,26 +89,16 @@ class GuestConfigEditSchema {
       return true;
     }
 
+    // Proxmox's [n] placeholders denote nonnegative decimal indices, not a
+    // regular-expression character class. Escape the surrounding literal text.
+    final pattern = parameter.contains('[n]')
+        ? parameter.split('[n]').map(RegExp.escape).join(r'\d+')
+        : parameter;
     try {
-      if (RegExp('^$parameter\$').hasMatch(key)) {
-        return true;
-      }
+      return RegExp('^(?:$pattern)\$').hasMatch(key);
     } on FormatException {
       // Not every schema key is a valid regular expression.
-    }
-
-    final wildcardIndex = parameter.indexOf('[n]');
-    if (wildcardIndex == -1) {
       return false;
     }
-
-    final prefix = parameter.substring(0, wildcardIndex);
-    final suffix = parameter.substring(wildcardIndex + 3);
-    if (!key.startsWith(prefix) || !key.endsWith(suffix)) {
-      return false;
-    }
-
-    final number = key.substring(prefix.length, key.length - suffix.length);
-    return number.isNotEmpty && int.tryParse(number) != null;
   }
 }
