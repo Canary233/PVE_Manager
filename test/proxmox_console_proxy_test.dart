@@ -262,6 +262,46 @@ void main() {
     await response.drain<void>();
   });
 
+  test(
+    'preserves repeated query values and fragments in console URLs',
+    () async {
+      final fixture = await _Fixture.create(ProxmoxAuthMode.password);
+      final local = fixture.proxy.consoleUri(
+        Uri.parse(
+          '${fixture.upstreamOrigin}/?tag=first&tag=second&novnc=1#console',
+        ),
+      );
+      expect(local.queryParametersAll['tag'], ['first', 'second']);
+      expect(local.queryParameters['encrypt'], '0');
+      expect(local.fragment, 'console');
+    },
+  );
+
+  test('all concurrent close callers await the same shutdown', () async {
+    final fixture = await _Fixture.create(ProxmoxAuthMode.password);
+    final first = fixture.proxy.close();
+    final second = fixture.proxy.close();
+    expect(identical(first, second), isTrue);
+    await Future.wait([first, second]);
+  });
+
+  test(
+    'does not fail forwarding when a relative Referer is supplied',
+    () async {
+      final fixture = await _Fixture.create(ProxmoxAuthMode.password);
+      fixture.handle = (request) async {
+        request.response.write('ok');
+        await request.response.close();
+      };
+      final response = await fixture.request(
+        '/asset',
+        headers: {HttpHeaders.refererHeader: '/relative'},
+      );
+      expect(response.statusCode, HttpStatus.ok);
+      expect(await utf8.decoder.bind(response).join(), 'ok');
+    },
+  );
+
   test('blocks redirects to a different upstream', () async {
     final fixture = await _Fixture.create(ProxmoxAuthMode.apiToken);
     fixture.handle = (request) async {

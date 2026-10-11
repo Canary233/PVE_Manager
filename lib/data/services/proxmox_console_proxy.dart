@@ -30,6 +30,7 @@ class ProxmoxConsoleProxy {
   final String authCookie;
   final String authCookieName;
   bool _closed = false;
+  Future<void>? _closeFuture;
 
   static const _timeout = Duration(seconds: 15);
   static const _browserCompatibilityScript = '''
@@ -73,26 +74,28 @@ class ProxmoxConsoleProxy {
     if (uri.origin != _origin.origin) {
       throw ArgumentError.value(uri, 'uri', 'Not a console on this server');
     }
-    return origin.resolveUri(
-      Uri(
-        path: uri.path,
-        queryParameters: {
-          ...uri.queryParameters,
-          // PVE defaults noVNC to WSS, but only the loopback hop uses WS.
-          if (uri.queryParameters['novnc'] == '1') 'encrypt': '0',
-        },
-      ),
+    return uri.replace(
+      scheme: origin.scheme,
+      host: origin.host,
+      port: origin.port,
+      userInfo: '',
+      queryParameters: {
+        ...uri.queryParametersAll,
+        // PVE defaults noVNC to WSS, but only the loopback hop uses WS.
+        if (uri.queryParameters['novnc'] == '1') 'encrypt': '0',
+      },
     );
   }
 
-  Future<void> close() async {
-    if (_closed) {
-      return;
-    }
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     _closed = true;
     _httpClient.close(force: true);
-    await Future.wait(_sockets.toList().map(_closeSocket));
-    await _server.close(force: true);
+    await Future.wait([
+      _server.close(force: true),
+      ..._sockets.toList().map(_closeSocket),
+    ]);
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
@@ -169,7 +172,10 @@ class ProxmoxConsoleProxy {
     final referer = request.headers.value(HttpHeaders.refererHeader);
     if (referer != null) {
       final localReferer = Uri.tryParse(referer);
-      if (localReferer != null && localReferer.origin == origin.origin) {
+      if (localReferer != null &&
+          localReferer.hasAuthority &&
+          (localReferer.scheme == 'http' || localReferer.scheme == 'https') &&
+          localReferer.origin == origin.origin) {
         upstream.headers.set(
           HttpHeaders.refererHeader,
           _origin.replace(path: localReferer.path, query: localReferer.query),

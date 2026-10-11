@@ -3,6 +3,7 @@ package com.canary233.PVEManager
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.res.Configuration
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Bundle
@@ -33,6 +34,7 @@ class RemoteConsoleActivity : Activity() {
     private lateinit var content: FrameLayout
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
+    private lateinit var toolbar: TextView
     private lateinit var errorText: TextView
     private lateinit var cookieDomain: String
     private var ignoreCertificateErrors = false
@@ -95,7 +97,7 @@ class RemoteConsoleActivity : Activity() {
                 fitsSystemWindows = true
             }
         }
-        val toolbar = TextView(this).apply {
+        toolbar = TextView(this).apply {
             text = title
             setTextColor(0xffffffff.toInt())
             textSize = 18f
@@ -104,6 +106,7 @@ class RemoteConsoleActivity : Activity() {
             setBackgroundColor(0xff202124.toInt())
             setOnClickListener { finish() }
         }
+        updateToolbarVisibility(resources.configuration)
         progressBar = ProgressBar(
             this,
             null,
@@ -186,9 +189,11 @@ class RemoteConsoleActivity : Activity() {
             val originUrl = consoleOrigin(url)
             val domainUrl = consoleDomainUrl(url, cookieDomain)
             val loadConsole = {
-                flush()
                 runOnUiThread {
-                    webView.loadUrl(url)
+                    if (!isFinishing && !isDestroyed) {
+                        flush()
+                        webView.loadUrl(url)
+                    }
                 }
             }
             if (domainUrl == originUrl) {
@@ -249,13 +254,17 @@ class RemoteConsoleActivity : Activity() {
                 isUserGesture: Boolean,
                 resultMsg: Message?
             ): Boolean {
+                if (isFinishing || isDestroyed) {
+                    return false
+                }
+                val message = resultMsg ?: return false
+                val transport = message.obj as? WebView.WebViewTransport
+                    ?: return false
                 val popup = createConsoleWebView()
                 CookieManager.getInstance().setAcceptThirdPartyCookies(popup, true)
                 attachWebView(popup)
-                val transport = resultMsg?.obj as? WebView.WebViewTransport
-                    ?: return false
                 transport.webView = popup
-                resultMsg.sendToTarget()
+                message.sendToTarget()
                 return true
             }
 
@@ -441,12 +450,27 @@ class RemoteConsoleActivity : Activity() {
             return
         }
         content.removeView(target)
-        target.destroy()
+        releaseWebView(target)
         val previous = webViews.lastOrNull()
         if (previous != null) {
             webView = previous
             previous.visibility = View.VISIBLE
             previous.requestFocus()
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        updateToolbarVisibility(newConfig)
+    }
+
+    private fun updateToolbarVisibility(configuration: Configuration) {
+        toolbar.visibility = if (
+            terminalMode || configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        ) {
+            View.GONE
+        } else {
+            View.VISIBLE
         }
     }
 
@@ -463,10 +487,17 @@ class RemoteConsoleActivity : Activity() {
     override fun onDestroy() {
         for (view in webViews.toList()) {
             content.removeView(view)
-            view.destroy()
+            releaseWebView(view)
         }
         webViews.clear()
         super.onDestroy()
+    }
+
+    private fun releaseWebView(view: WebView) {
+        view.stopLoading()
+        view.webChromeClient = null
+        view.webViewClient = WebViewClient()
+        view.destroy()
     }
 
     private fun showError(message: String) {

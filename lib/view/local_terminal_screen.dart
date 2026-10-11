@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import 'package:pve_manager/core/l10n/l10n_extensions.dart';
+import 'package:pve_manager/core/utils/terminal_output_filter.dart';
 import 'package:pve_manager/data/models/node_terminal_session.dart';
 import 'package:pve_manager/data/models/pve_resource.dart';
 import 'package:pve_manager/data/services/proxmox_client.dart';
@@ -43,8 +44,8 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
   late final GlobalKey<TerminalViewState> _terminalViewKey;
   late final TerminalController _controller;
   late final FocusNode _focusNode;
-  late final StreamController<List<int>> _outputBytesController;
-  late final StreamSubscription<String> _outputTextSubscription;
+  late ByteConversionSink _outputBytesSink;
+  final _outputFilter = TerminalOutputFilter();
 
   ProxmoxTerminalConnection? _connection;
   StreamSubscription<dynamic>? _socketSubscription;
@@ -77,10 +78,7 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
       onOutput: _sendInput,
       onResize: _sendResize,
     );
-    _outputBytesController = StreamController<List<int>>();
-    _outputTextSubscription = _outputBytesController.stream
-        .transform(const Utf8Decoder(allowMalformed: true))
-        .listen(_terminal.write);
+    _resetOutputDecoder();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_disposed) {
@@ -97,17 +95,21 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
       ..canRequestFocus = false
       ..unfocus();
     _pingTimer?.cancel();
-    unawaited(_socketSubscription?.cancel());
-    unawaited(_connection?.close());
-    unawaited(_outputTextSubscription.cancel());
-    _outputBytesController.close();
+    unawaited(_releaseConnection(_socketSubscription, _connection));
+    _socketSubscription = null;
+    _connection = null;
+    _outputBytesSink.close();
     _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
 
   Future<void> _connect() async {
+    if (_disposed) {
+      return;
+    }
     final l10n = context.l10n;
+    _resetOutputDecoder();
     _setConnectionState(
       _TerminalConnectionState.connecting,
       l10n.terminalConnecting,
@@ -115,13 +117,16 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     try {
       final apiPath = _terminalApiPath();
       final session = await _createSession();
+      if (_disposed) {
+        return;
+      }
       final connection = await widget.client.connectTerminalWebSocket(
         apiPath: apiPath,
         session: session,
       );
 
       if (_disposed) {
-        await connection.close();
+        await _releaseConnection(null, connection);
         return;
       }
 
@@ -129,31 +134,82 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
       _socketSubscription = connection.socket.listen(
         _handleSocketMessage,
         onDone: () {
-          if (!_disposed) {
-            _setConnectionState(
-              _TerminalConnectionState.disconnected,
-              l10n.terminalDisconnected,
-            );
+          if (!_disposed && identical(_connection, connection)) {
+            _disconnect(l10n.terminalDisconnected);
           }
         },
         onError: (Object error) {
-          if (!_disposed) {
-            _setConnectionState(
-              _TerminalConnectionState.disconnected,
-              localizedError(l10n, error),
-            );
+          if (!_disposed && identical(_connection, connection)) {
+            _disconnect(localizedError(l10n, error));
           }
         },
       );
 
-      connection.socket.add('${session.user}:${session.ticket}\n');
-      _startPing();
+      _sendSocketData('${session.user}:${session.ticket}\n');
     } on Object catch (error) {
       if (!_disposed) {
-        _setConnectionState(
-          _TerminalConnectionState.disconnected,
-          localizedError(l10n, error),
-        );
+        _disconnect(localizedError(l10n, error));
+      }
+    }
+  }
+
+  void _resetOutputDecoder() {
+    // Each socket owns its UTF-8 sequence state. Decode synchronously so text
+    // and binary WebSocket messages keep their original ordering.
+    _outputFilter.reset();
+    _outputBytesSink = const Utf8Decoder(
+      allowMalformed: true,
+    ).startChunkedConversion(_TerminalOutputSink(_writeOutput));
+  }
+
+  void _writeOutput(String text) {
+    if (_disposed) {
+      return;
+    }
+    final filtered = _outputFilter.add(text);
+    if (filtered.isNotEmpty) {
+      _terminal.write(filtered);
+    }
+  }
+
+  Future<void> _releaseConnection(
+    StreamSubscription<dynamic>? subscription,
+    ProxmoxTerminalConnection? connection,
+  ) async {
+    try {
+      await subscription?.cancel();
+    } on Object {
+      // Continue releasing the socket even if its subscription already failed.
+    } finally {
+      if (connection != null) {
+        try {
+          await connection.close();
+        } on Object {
+          // A broken socket can fail its close handshake. Release its client
+          // even when there is no longer a route on which to report the error.
+          connection.dispose();
+        }
+      }
+    }
+  }
+
+  void _disconnect(String message) {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    final subscription = _socketSubscription;
+    final connection = _connection;
+    _socketSubscription = null;
+    _connection = null;
+    unawaited(_releaseConnection(subscription, connection));
+    _setConnectionState(_TerminalConnectionState.disconnected, message);
+  }
+
+  void _sendSocketData(String data) {
+    try {
+      _connection?.socket.add(data);
+    } on Object catch (error) {
+      if (!_disposed) {
+        _disconnect(localizedError(context.l10n, error));
       }
     }
   }
@@ -197,51 +253,45 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
   void _handleSocketText(String data) {
     if (_connectionState == _TerminalConnectionState.connecting) {
       if (!data.startsWith('OK')) {
-        unawaited(_connection?.close());
-        _setConnectionState(
-          _TerminalConnectionState.disconnected,
-          context.l10n.terminalAuthenticationFailed,
-        );
+        _disconnect(context.l10n.terminalAuthenticationFailed);
         return;
       }
 
       _setConnectionState(_TerminalConnectionState.connected, null);
+      _startPing();
       _sendCurrentSize();
       _requestKeyboardAfterFrame(clearSelection: false);
       final remaining = data.substring(2);
       if (remaining.isNotEmpty) {
-        _terminal.write(remaining);
+        _writeOutput(remaining);
       }
       return;
     }
 
     if (_connectionState == _TerminalConnectionState.connected) {
-      _terminal.write(data);
+      _writeOutput(data);
     }
   }
 
   void _handleSocketBytes(Uint8List bytes) {
     if (_connectionState == _TerminalConnectionState.connecting) {
       if (bytes.length < 2 || bytes[0] != 0x4f || bytes[1] != 0x4b) {
-        unawaited(_connection?.close());
-        _setConnectionState(
-          _TerminalConnectionState.disconnected,
-          context.l10n.terminalAuthenticationFailed,
-        );
+        _disconnect(context.l10n.terminalAuthenticationFailed);
         return;
       }
 
       _setConnectionState(_TerminalConnectionState.connected, null);
+      _startPing();
       _sendCurrentSize();
       _requestKeyboardAfterFrame(clearSelection: false);
       if (bytes.length > 2) {
-        _outputBytesController.add(bytes.sublist(2));
+        _outputBytesSink.add(Uint8List.sublistView(bytes, 2));
       }
       return;
     }
 
     if (_connectionState == _TerminalConnectionState.connected) {
-      _outputBytesController.add(bytes);
+      _outputBytesSink.add(bytes);
     }
   }
 
@@ -251,14 +301,14 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     }
 
     final byteLength = utf8.encode(data).length;
-    _connection?.socket.add('0:$byteLength:$data');
+    _sendSocketData('0:$byteLength:$data');
   }
 
   void _sendResize(int columns, int rows, int pixelWidth, int pixelHeight) {
     if (_connectionState != _TerminalConnectionState.connected) {
       return;
     }
-    _connection?.socket.add('1:$columns:$rows:');
+    _sendSocketData('1:$columns:$rows:');
   }
 
   void _sendCurrentSize() {
@@ -269,7 +319,7 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     _pingTimer?.cancel();
     _pingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (_connectionState == _TerminalConnectionState.connected) {
-        _connection?.socket.add('2');
+        _sendSocketData('2');
       }
     });
   }
@@ -286,12 +336,13 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     );
     _pingTimer?.cancel();
     try {
-      await _socketSubscription?.cancel();
+      final subscription = _socketSubscription;
       _socketSubscription = null;
       final connection = _connection;
       _connection = null;
-      if (connection != null) {
-        await connection.close();
+      await _releaseConnection(subscription, connection);
+      if (_disposed) {
+        return;
       }
       _terminal.write('\r\n');
       await _connect();
@@ -336,9 +387,15 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
       }
     }
     const channel = MethodChannel('pve_manager/toast');
-    await channel.invokeMethod<void>('show', <String, String>{
-      'message': message,
-    });
+    try {
+      await channel.invokeMethod<void>('show', <String, String>{
+        'message': message,
+      });
+    } on MissingPluginException {
+      // Clipboard operations remain usable when no native toast is available.
+    } on PlatformException {
+      // A toast failure must not fail a successful clipboard operation.
+    }
   }
 
   Future<void> _pasteClipboard() async {
@@ -347,6 +404,9 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     }
 
     final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!_isInputEnabled) {
+      return;
+    }
     final text = data?.text;
     if (text == null || text.isEmpty) {
       return;
@@ -354,7 +414,7 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
     _terminal.paste(text);
     _controller.clearSelection();
     _focusKeyboard(clearSelection: false);
-    if (!mounted) {
+    if (!mounted || _disposed) {
       return;
     }
     // Android 13+ shows its own clipboard access overlay first. Delay the
@@ -372,10 +432,12 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
 
     final ctrl = _ctrlLatch;
     final alt = _altLatch;
-    setState(() {
-      _ctrlLatch = false;
-      _altLatch = false;
-    });
+    if (ctrl || alt) {
+      setState(() {
+        _ctrlLatch = false;
+        _altLatch = false;
+      });
+    }
 
     if (shortcut.text != null) {
       final text = shortcut.text!;
@@ -486,7 +548,7 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
   }
 
   void _setConnectionState(_TerminalConnectionState state, String? message) {
-    if (!mounted) {
+    if (!mounted || _disposed) {
       return;
     }
     _syncFocusAvailability(state);
@@ -599,19 +661,14 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
               ),
             ),
             if (_connectionState != _TerminalConnectionState.connecting)
-              AnimatedBuilder(
-                animation: _controller,
-                builder: (context, _) {
-                  return _TerminalShortcutBar(
-                    ctrlActive: _ctrlLatch,
-                    altActive: _altLatch,
-                    onShortcut: _sendShortcut,
-                    onToggleCtrl: _toggleCtrlLatch,
-                    onToggleAlt: _toggleAltLatch,
-                    onFocusKeyboard: _focusKeyboard,
-                    onToggleKeyboard: _toggleKeyboard,
-                  );
-                },
+              _TerminalShortcutBar(
+                ctrlActive: _ctrlLatch,
+                altActive: _altLatch,
+                onShortcut: _sendShortcut,
+                onToggleCtrl: _toggleCtrlLatch,
+                onToggleAlt: _toggleAltLatch,
+                onFocusKeyboard: _focusKeyboard,
+                onToggleKeyboard: _toggleKeyboard,
               ),
           ],
         ),
@@ -632,6 +689,18 @@ class _LocalTerminalScreenState extends State<LocalTerminalScreen> {
       TargetPlatform.fuchsia => TerminalTargetPlatform.fuchsia,
     };
   }
+}
+
+class _TerminalOutputSink implements Sink<String> {
+  const _TerminalOutputSink(this.onData);
+
+  final ValueChanged<String> onData;
+
+  @override
+  void add(String data) => onData(data);
+
+  @override
+  void close() {}
 }
 
 enum _TerminalConnectionState { connecting, connected, disconnected }

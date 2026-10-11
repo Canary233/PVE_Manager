@@ -39,10 +39,12 @@ class RemoteConsoleScreen extends StatefulWidget {
 }
 
 class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
-  final WebviewController _controller = WebviewController();
+  WebviewController _controller = WebviewController();
   final List<StreamSubscription<Object?>> _subscriptions = [];
 
   bool _controllerInitializeStarted = false;
+  bool _initializeInFlight = false;
+  Future<void>? _controllerDisposal;
   bool _isInitialized = false;
   bool _isLoading = true;
   bool _ctrlLatch = false;
@@ -56,7 +58,30 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
   }
 
   Future<void> _initialize() async {
+    if (_initializeInFlight || !mounted) {
+      return;
+    }
+    _initializeInFlight = true;
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
     try {
+      // A failed setup may already have a native view and single-listener
+      // streams. Release that instance before attempting a fresh setup.
+      if (_controllerInitializeStarted) {
+        for (final subscription in _subscriptions) {
+          await subscription.cancel();
+        }
+        _subscriptions.clear();
+        await _disposeController();
+        if (!mounted) {
+          return;
+        }
+        _controller = WebviewController();
+        _controllerDisposal = null;
+        _controllerInitializeStarted = false;
+      }
       await _initializeCertificatePolicy();
       if (!mounted) {
         return;
@@ -91,12 +116,18 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
           ? terminalConsoleBackgroundColor(Theme.of(context).colorScheme)
           : Colors.black;
       await _controller.setBackgroundColor(webviewBackgroundColor);
+      if (!mounted) {
+        return;
+      }
       await _controller.setPopupWindowPolicy(
         WebviewPopupWindowPolicy.sameWindow,
       );
       await _controller.addScriptToExecuteOnDocumentCreated(
         _buildAuthenticationBootstrapScript(),
       );
+      if (!mounted) {
+        return;
+      }
       if (widget.terminalMode) {
         await _controller.addScriptToExecuteOnDocumentCreated(
           _buildTerminalBootstrapScript(),
@@ -114,6 +145,8 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
       _showLoadFailure(error.message ?? error.code);
     } on Object catch (error) {
       _showLoadFailure(error.toString());
+    } finally {
+      _initializeInFlight = false;
     }
   }
 
@@ -159,7 +192,7 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
       'SameSite=Strict',
       if (widget.uri.scheme == 'https') 'Secure',
     ].join('; ');
-    final host = _hostWithPort(widget.uri).toLowerCase();
+    final origin = widget.uri.origin.toLowerCase();
     final marker =
         '${widget.uri.toString().hashCode}:${widget.authCookie.hashCode}';
 
@@ -168,7 +201,7 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
   if (window.top !== window.self) {
     return;
   }
-  if (location.host.toLowerCase() !== ${jsonEncode(host)}) {
+  if (location.origin.toLowerCase() !== ${jsonEncode(origin)}) {
     return;
   }
 
@@ -268,14 +301,23 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
     WebviewPermissionKind kind,
     bool isUserInitiated,
   ) async {
-    if (kind == WebviewPermissionKind.clipboardRead && isUserInitiated) {
+    final requestUri = Uri.tryParse(url);
+    final isConsoleOrigin =
+        requestUri != null &&
+        requestUri.scheme == widget.uri.scheme &&
+        requestUri.host == widget.uri.host &&
+        requestUri.port == widget.uri.port;
+    if (mounted &&
+        kind == WebviewPermissionKind.clipboardRead &&
+        isUserInitiated &&
+        isConsoleOrigin) {
       return WebviewPermissionDecision.allow;
     }
     return WebviewPermissionDecision.deny;
   }
 
   Future<void> _focusTerminal() async {
-    if (!_isInitialized) {
+    if (!mounted || !_isInitialized) {
       return;
     }
 
@@ -324,7 +366,7 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
   }
 
   Future<void> _sendTerminalShortcut(_TerminalShortcut shortcut) async {
-    if (!_isInitialized) {
+    if (!mounted || !_isInitialized) {
       return;
     }
 
@@ -517,9 +559,12 @@ class _RemoteConsoleScreenState extends State<RemoteConsoleScreen> {
     super.dispose();
   }
 
-  Future<void> _disposeController() async {
+  Future<void> _disposeController() =>
+      _controllerDisposal ??= _disposeControllerInstance(_controller);
+
+  Future<void> _disposeControllerInstance(WebviewController controller) async {
     try {
-      await _controller.dispose();
+      await controller.dispose();
     } on Object {
       // The controller may be mid-initialization when the route is closed.
     }
@@ -581,13 +626,6 @@ class _ConsoleErrorOverlay extends StatelessWidget {
       ),
     );
   }
-}
-
-String _hostWithPort(Uri uri) {
-  if (!uri.hasPort) {
-    return uri.host;
-  }
-  return '${uri.host}:${uri.port}';
 }
 
 class _TerminalShortcut {
