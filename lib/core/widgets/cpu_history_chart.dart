@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:pve_manager/core/l10n/l10n_extensions.dart';
@@ -60,32 +63,39 @@ class MetricHistoryChart extends StatelessWidget {
       );
     }
 
-    final computedMaxValue = values.fold<double>(
+    final chartValues = List<double>.unmodifiable(
+      values.map((value) => value.isFinite && value >= 0 ? value : 0.0),
+    );
+    final computedMaxValue = chartValues.fold<double>(
       0,
       (max, value) => value > max ? value : max,
     );
-    final visibleMaxValue = (maxValue ?? computedMaxValue).clamp(
-      0.0001,
-      double.infinity,
-    );
+    final requestedMaxValue = maxValue;
+    final visibleMaxValue =
+        (requestedMaxValue != null && requestedMaxValue.isFinite
+                ? requestedMaxValue
+                : computedMaxValue)
+            .clamp(0.0001, double.infinity);
     final colorScheme = Theme.of(context).colorScheme;
 
     return SizedBox(
       width: double.infinity,
       height: 210,
-      child: CustomPaint(
-        painter: _MetricHistoryPainter(
-          values: values,
-          timestamps: timestamps,
-          maxValue: visibleMaxValue,
-          valueLabelBuilder: valueLabelBuilder,
-          lineColor: lineColor ?? colorScheme.primary,
-          fillColor:
-              fillColor ??
-              (lineColor ?? colorScheme.primary).withValues(alpha: 0.2),
-          gridColor: colorScheme.outlineVariant.withValues(alpha: 0.8),
-          labelColor: colorScheme.onSurfaceVariant,
-          textStyle: Theme.of(context).textTheme.labelSmall,
+      child: RepaintBoundary(
+        child: CustomPaint(
+          painter: _MetricHistoryPainter(
+            values: chartValues,
+            timestamps: List<int>.unmodifiable(timestamps),
+            maxValue: visibleMaxValue,
+            valueLabelBuilder: valueLabelBuilder,
+            lineColor: lineColor ?? colorScheme.primary,
+            fillColor:
+                fillColor ??
+                (lineColor ?? colorScheme.primary).withValues(alpha: 0.2),
+            gridColor: colorScheme.outlineVariant.withValues(alpha: 0.8),
+            labelColor: colorScheme.onSurfaceVariant,
+            textStyle: Theme.of(context).textTheme.labelSmall,
+          ),
         ),
       ),
     );
@@ -171,7 +181,7 @@ class _MetricHistoryPainter extends CustomPainter {
     final singlePoint = values.length == 1;
     for (var i = 0; i < values.length; i++) {
       final x = singlePoint
-          ? (i == 0 ? chartRect.left : chartRect.right)
+          ? chartRect.left
           : chartRect.left + chartRect.width * i / (values.length - 1);
       final ratio = (values[i] / maxValue).clamp(0, 1).toDouble();
       final y = chartRect.bottom - ratio * chartRect.height;
@@ -188,7 +198,9 @@ class _MetricHistoryPainter extends CustomPainter {
     }
 
     if (singlePoint) {
-      final y = path.getBounds().top;
+      final y =
+          chartRect.bottom -
+          (values.first / maxValue).clamp(0, 1) * chartRect.height;
       path.lineTo(chartRect.right, y);
       fillPath.lineTo(chartRect.right, y);
     }
@@ -230,13 +242,17 @@ class _MetricHistoryPainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
-    )..layout();
-    final y = (centerY - painter.height / 2).clamp(
-      0,
-      chartRect.bottom - painter.height,
-    );
-    final offset = Offset(chartRect.left - 8 - painter.width, y.toDouble());
-    painter.paint(canvas, offset);
+    )..layout(maxWidth: chartRect.left - 8);
+    try {
+      final y = (centerY - painter.height / 2).clamp(
+        0,
+        math.max(0, chartRect.bottom - painter.height),
+      );
+      final offset = Offset(chartRect.left - 8 - painter.width, y.toDouble());
+      painter.paint(canvas, offset);
+    } finally {
+      painter.dispose();
+    }
   }
 
   void _drawXAxisLabels(
@@ -251,7 +267,7 @@ class _MetricHistoryPainter extends CustomPainter {
     final labelIndexes = _xAxisLabelIndexes();
     for (final index in labelIndexes) {
       final timestampSeconds = timestamps[index];
-      if (timestampSeconds <= 0) {
+      if (timestampSeconds <= 0 || timestampSeconds > 8640000000000) {
         continue;
       }
 
@@ -273,12 +289,16 @@ class _MetricHistoryPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
         maxLines: 2,
         textAlign: TextAlign.center,
-      )..layout(maxWidth: compact ? 46 : 58);
-      final left = (x - painter.width / 2).clamp(
-        chartRect.left,
-        chartRect.right - painter.width,
-      );
-      painter.paint(canvas, Offset(left.toDouble(), chartRect.bottom + 8));
+      )..layout(maxWidth: math.min(compact ? 46 : 58, chartRect.width));
+      try {
+        final left = (x - painter.width / 2).clamp(
+          chartRect.left,
+          math.max(chartRect.left, chartRect.right - painter.width),
+        );
+        painter.paint(canvas, Offset(left.toDouble(), chartRect.bottom + 8));
+      } finally {
+        painter.dispose();
+      }
     }
   }
 
@@ -299,11 +319,14 @@ class _MetricHistoryPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _MetricHistoryPainter oldDelegate) {
-    return oldDelegate.values != values ||
-        oldDelegate.timestamps != timestamps ||
+    return !listEquals(oldDelegate.values, values) ||
+        !listEquals(oldDelegate.timestamps, timestamps) ||
         oldDelegate.maxValue != maxValue ||
         oldDelegate.lineColor != lineColor ||
         oldDelegate.fillColor != fillColor ||
-        oldDelegate.gridColor != gridColor;
+        oldDelegate.gridColor != gridColor ||
+        oldDelegate.labelColor != labelColor ||
+        oldDelegate.textStyle != textStyle ||
+        oldDelegate.valueLabelBuilder != valueLabelBuilder;
   }
 }

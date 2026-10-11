@@ -27,14 +27,20 @@ class UsageLine extends StatelessWidget {
           children: [
             Row(
               children: [
-                SizedBox(
-                  width: alignRight ? null : _edgeTextWidth,
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
+                if (alignRight)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth:
+                          (constraints.maxWidth - 12).clamp(
+                            0,
+                            double.infinity,
+                          ) /
+                          2,
+                    ),
+                    child: _label(),
+                  )
+                else
+                  SizedBox(width: _edgeTextWidth, child: _label()),
                 const SizedBox(width: 12),
                 Expanded(
                   child: isLoading
@@ -52,13 +58,17 @@ class UsageLine extends StatelessWidget {
             ),
             const SizedBox(height: 5),
             LinearProgressIndicator(
-              value: isLoading ? null : value.clamp(0, 1),
+              value: isLoading
+                  ? null
+                  : (value.isFinite ? value.clamp(0, 1) : 0),
             ),
           ],
         );
       },
     );
   }
+
+  Widget _label() => Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
 }
 
 class _InlineUsageLoadingIndicator extends StatelessWidget {
