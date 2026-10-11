@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:pve_manager/core/l10n/l10n_extensions.dart';
+import 'package:pve_manager/core/settings/auto_refresh_mixin.dart';
 import 'package:pve_manager/data/models/guest_action.dart';
 import 'package:pve_manager/data/models/guest_rrd_point.dart';
 import 'package:pve_manager/data/models/pve_resource.dart';
@@ -38,11 +39,13 @@ class GuestDetailScreen extends StatefulWidget {
   State<GuestDetailScreen> createState() => _GuestDetailScreenState();
 }
 
-class _GuestDetailScreenState extends State<GuestDetailScreen> {
+class _GuestDetailScreenState extends State<GuestDetailScreen>
+    with AutoRefreshMixin<GuestDetailScreen> {
   late PveResource _guest;
   late Future<List<GuestRrdPoint>> _historyFuture;
-  Timer? _refreshTimer;
   bool _isRefreshing = false;
+  bool _isHistoryLoading = false;
+  int _historyGeneration = 0;
   bool _isGuestStatusRefreshing = false;
   bool _isActionRunning = false;
   int _guestStatusGeneration = 0;
@@ -57,77 +60,70 @@ class _GuestDetailScreenState extends State<GuestDetailScreen> {
     _guest = widget.client.applyCachedGuestDiskUsage(widget.guest);
     _historyFuture = _loadHistory();
     unawaited(_refreshGuestStatus(notifyStart: false));
-    widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-    _startRefreshTimer();
   }
 
   @override
   void didUpdateWidget(GuestDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.guest.id != widget.guest.id) {
+    if (oldWidget.guest.id != widget.guest.id ||
+        oldWidget.guest.node != widget.guest.node ||
+        oldWidget.client != widget.client) {
       _guestStatusGeneration++;
       _isGuestStatusRefreshing = false;
+      _isRefreshing = false;
       _guest = widget.client.applyCachedGuestDiskUsage(widget.guest);
       _lastHistory = null;
       _historyFuture = _loadHistory();
       unawaited(_refreshGuestStatus(notifyStart: false));
     }
-    if (oldWidget.autoRefreshIntervalListenable !=
-        widget.autoRefreshIntervalListenable) {
-      oldWidget.autoRefreshIntervalListenable.removeListener(
-        _startRefreshTimer,
-      );
-      widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-      _startRefreshTimer();
-    }
   }
 
   @override
-  void dispose() {
-    widget.autoRefreshIntervalListenable.removeListener(_startRefreshTimer);
-    _refreshTimer?.cancel();
-    super.dispose();
-  }
+  ValueListenable<Duration> get autoRefreshIntervalListenable =>
+      widget.autoRefreshIntervalListenable;
 
-  void _startRefreshTimer() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(widget.autoRefreshIntervalListenable.value, (
-      _,
-    ) {
-      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) {
-        _refreshData();
-      }
-    });
-  }
+  @override
+  Future<void> onAutoRefresh() => _refreshData();
 
   Future<List<GuestRrdPoint>> _loadHistory() async {
-    final history = await widget.client.getGuestRrdData(
-      _guest,
-      timeframe: _timeframe,
-    );
-    _lastHistory = history;
-    return history;
+    final generation = ++_historyGeneration;
+    _isHistoryLoading = true;
+    try {
+      final history = await widget.client.getGuestRrdData(
+        _guest,
+        timeframe: _timeframe,
+      );
+      if (mounted && generation == _historyGeneration) {
+        _lastHistory = history;
+      }
+      return history;
+    } finally {
+      if (generation == _historyGeneration) {
+        _isHistoryLoading = false;
+      }
+    }
   }
 
   Future<void> _refreshData() async {
-    if (_isRefreshing) {
+    if (!mounted || _isRefreshing || _isHistoryLoading) {
       return;
     }
 
     _isRefreshing = true;
     final historyFuture = _loadHistory();
+    final generation = _historyGeneration;
     setState(() {
       _historyFuture = historyFuture;
     });
 
-    await _refreshGuestStatus();
-
     try {
-      await historyFuture;
+      await Future.wait<Object?>([historyFuture, _refreshGuestStatus()]);
     } on Object {
       // FutureBuilder renders the error when there is no cached history.
     } finally {
-      _isRefreshing = false;
+      if (mounted && generation == _historyGeneration) {
+        setState(() => _isRefreshing = false);
+      }
     }
   }
 
@@ -167,6 +163,7 @@ class _GuestDetailScreenState extends State<GuestDetailScreen> {
 
     setState(() {
       _timeframe = value;
+      _isRefreshing = false;
       _historyFuture = _loadHistory();
     });
   }
@@ -423,6 +420,7 @@ class _GuestDetailScreenState extends State<GuestDetailScreen> {
           ),
           const SizedBox(height: 16),
           FutureBuilder<List<GuestRrdPoint>>(
+            key: ValueKey((widget.client, widget.guest.id, widget.guest.node)),
             future: _historyFuture,
             builder: (context, snapshot) {
               final points = snapshot.data ?? _lastHistory;

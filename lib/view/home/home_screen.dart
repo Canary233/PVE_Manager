@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:pve_manager/core/l10n/l10n_extensions.dart';
+import 'package:pve_manager/core/settings/auto_refresh_mixin.dart';
 import 'package:pve_manager/data/models/pve_server_config.dart';
 import 'package:pve_manager/data/services/proxmox_api_exception.dart';
 import 'package:pve_manager/data/services/proxmox_client.dart';
@@ -38,57 +39,40 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with AutoRefreshMixin<HomeScreen> {
   final List<PveServerConfig> _servers = <PveServerConfig>[];
   final ServerRepository _repository = ServerRepository.instance;
-  Timer? _refreshTimer;
   bool _isInitializing = true;
   bool _isLoading = false;
+  Future<void>? _serversLoadFuture;
   Object? _connectingServerKey;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-    _startRefreshTimer();
     _loadServers();
   }
 
   @override
-  void didUpdateWidget(HomeScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.autoRefreshIntervalListenable !=
-        widget.autoRefreshIntervalListenable) {
-      oldWidget.autoRefreshIntervalListenable.removeListener(
-        _startRefreshTimer,
-      );
-      widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-      _startRefreshTimer();
+  ValueListenable<Duration> get autoRefreshIntervalListenable =>
+      widget.autoRefreshIntervalListenable;
+
+  @override
+  Future<void> onAutoRefresh() async {
+    if (!_isLoading) {
+      await _loadServers();
     }
   }
 
-  @override
-  void dispose() {
-    widget.autoRefreshIntervalListenable.removeListener(_startRefreshTimer);
-    _refreshTimer?.cancel();
-    super.dispose();
-  }
-
-  void _startRefreshTimer() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(widget.autoRefreshIntervalListenable.value, (
-      _,
-    ) {
-      if (mounted &&
-          !_isLoading &&
-          (ModalRoute.of(context)?.isCurrent ?? true)) {
-        _loadServers();
-      }
+  Future<void> _loadServers() {
+    return _serversLoadFuture ??= _readServers().whenComplete(() {
+      _serversLoadFuture = null;
     });
   }
 
-  Future<void> _loadServers() async {
+  Future<void> _readServers() async {
     try {
       final servers = await _repository.getServers();
       if (!mounted) {

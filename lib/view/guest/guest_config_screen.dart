@@ -131,6 +131,8 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
   late Future<GuestConfig> _configFuture;
   GuestConfig? _lastConfig;
   bool _isSaving = false;
+  bool _isConfigLoading = false;
+  int _configGeneration = 0;
 
   @override
   void initState() {
@@ -138,17 +140,46 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
     _configFuture = _loadConfig();
   }
 
-  Future<GuestConfig> _loadConfig() async {
-    final config = await widget.client.getGuestConfig(widget.guest);
-    _lastConfig = config;
-    return config;
+  @override
+  void didUpdateWidget(GuestConfigScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.guest.id != widget.guest.id ||
+        oldWidget.guest.node != widget.guest.node ||
+        oldWidget.client != widget.client) {
+      _lastConfig = null;
+      _configFuture = _loadConfig();
+    }
   }
 
-  Future<void> _refresh() async {
+  Future<GuestConfig> _loadConfig() async {
+    final generation = ++_configGeneration;
+    _isConfigLoading = true;
+    try {
+      final config = await widget.client.getGuestConfig(widget.guest);
+      if (mounted && generation == _configGeneration) {
+        _lastConfig = config;
+      }
+      return config;
+    } finally {
+      if (generation == _configGeneration) {
+        _isConfigLoading = false;
+      }
+    }
+  }
+
+  Future<void> _refresh({bool force = false}) async {
+    if (!mounted || (_isConfigLoading && !force)) {
+      return;
+    }
+    final future = _loadConfig();
     setState(() {
-      _configFuture = _loadConfig();
+      _configFuture = future;
     });
-    await _configFuture;
+    try {
+      await future;
+    } on Object {
+      // FutureBuilder renders failures while retaining the last configuration.
+    }
   }
 
   Future<void> _editItem(String key, String value) async {
@@ -209,7 +240,7 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.configSaved)));
-      await _refresh();
+      await _refresh(force: true);
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -249,7 +280,7 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.configSaved)));
-      await _refresh();
+      await _refresh(force: true);
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -291,7 +322,7 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.configSaved)));
-      await _refresh();
+      await _refresh(force: true);
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -334,7 +365,7 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.configSaved)));
-      await _refresh();
+      await _refresh(force: true);
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -376,7 +407,7 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.configSaved)));
-      await _refresh();
+      await _refresh(force: true);
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -419,7 +450,7 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.configSaved)));
-      await _refresh();
+      await _refresh(force: true);
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -450,6 +481,7 @@ class _GuestConfigScreenState extends State<GuestConfigScreen> {
       body: Stack(
         children: [
           FutureBuilder<GuestConfig>(
+            key: ValueKey((widget.client, widget.guest.id, widget.guest.node)),
             future: _configFuture,
             builder: (context, snapshot) {
               final guestConfig = snapshot.data ?? _lastConfig;

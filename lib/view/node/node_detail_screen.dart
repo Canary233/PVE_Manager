@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:pve_manager/core/l10n/l10n_extensions.dart';
+import 'package:pve_manager/core/settings/auto_refresh_mixin.dart';
 import 'package:pve_manager/data/models/node_power_action.dart';
 import 'package:pve_manager/data/models/node_rrd_point.dart';
 import 'package:pve_manager/data/models/node_status.dart';
@@ -35,10 +36,11 @@ class NodeDetailScreen extends StatefulWidget {
   State<NodeDetailScreen> createState() => _NodeDetailScreenState();
 }
 
-class _NodeDetailScreenState extends State<NodeDetailScreen> {
+class _NodeDetailScreenState extends State<NodeDetailScreen>
+    with AutoRefreshMixin<NodeDetailScreen> {
   late Future<_NodeDetailData> _detailFuture;
-  Timer? _refreshTimer;
   bool _isDetailLoading = false;
+  int _detailGeneration = 0;
   bool _isExtendedThermalLoading = false;
   int _extendedThermalGeneration = 0;
   _NodeDetailData? _lastDetailData;
@@ -51,8 +53,6 @@ class _NodeDetailScreenState extends State<NodeDetailScreen> {
   void initState() {
     super.initState();
     _detailFuture = _loadDetailTracked();
-    widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-    _startRefreshTimer();
   }
 
   @override
@@ -63,52 +63,43 @@ class _NodeDetailScreenState extends State<NodeDetailScreen> {
       _extendedThermalGeneration++;
       _isExtendedThermalLoading = false;
       _extendedThermalState = null;
+      _lastDetailData = null;
       _detailFuture = _loadDetailTracked();
-    }
-    if (oldWidget.autoRefreshIntervalListenable !=
-        widget.autoRefreshIntervalListenable) {
-      oldWidget.autoRefreshIntervalListenable.removeListener(
-        _startRefreshTimer,
-      );
-      widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-      _startRefreshTimer();
     }
   }
 
   @override
-  void dispose() {
-    widget.autoRefreshIntervalListenable.removeListener(_startRefreshTimer);
-    _refreshTimer?.cancel();
-    super.dispose();
-  }
+  ValueListenable<Duration> get autoRefreshIntervalListenable =>
+      widget.autoRefreshIntervalListenable;
 
-  void _startRefreshTimer() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(widget.autoRefreshIntervalListenable.value, (
-      _,
-    ) {
-      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) {
-        _refresh();
-      }
-    });
-  }
+  @override
+  Future<void> onAutoRefresh() => _refresh();
 
-  Future<_NodeDetailData> _loadDetail() async {
+  Future<_NodeDetailData> _loadDetail(int generation) async {
+    final client = widget.client;
+    final node = widget.node.name;
     final results = await Future.wait<Object>([
-      widget.client.getNodeStatus(widget.node.name),
-      widget.client.getNodeRrdData(widget.node.name, timeframe: _timeframe),
+      client.getNodeStatus(node),
+      client.getNodeRrdData(node, timeframe: _timeframe),
     ]);
     final status = results[0] as NodeStatus;
-    final cachedExtendedThermalState =
-        _extendedThermalState ??
-        widget.client.cachedNodeThermalState(widget.node.name);
-    if (_extendedThermalState == null && cachedExtendedThermalState != null) {
+    if (!mounted || generation != _detailGeneration) {
+      return _NodeDetailData(
+        status: status,
+        thermalState: status.thermalState,
+        rrdPoints: results[1] as List<NodeRrdPoint>,
+      );
+    }
+    final cachedExtendedThermalState = widget.client.cachedNodeThermalState(
+      widget.node.name,
+    );
+    if (cachedExtendedThermalState != null) {
       _extendedThermalState = cachedExtendedThermalState;
     }
     final thermalState =
-        cachedExtendedThermalState == null || cachedExtendedThermalState.isEmpty
+        _extendedThermalState == null || _extendedThermalState!.isEmpty
         ? status.thermalState
-        : cachedExtendedThermalState;
+        : _extendedThermalState!;
 
     final detail = _NodeDetailData(
       status: status,
@@ -121,16 +112,19 @@ class _NodeDetailScreenState extends State<NodeDetailScreen> {
   }
 
   Future<_NodeDetailData> _loadDetailTracked() async {
+    final generation = ++_detailGeneration;
     _isDetailLoading = true;
     try {
-      return await _loadDetail();
+      return await _loadDetail(generation);
     } finally {
-      _isDetailLoading = false;
+      if (generation == _detailGeneration) {
+        _isDetailLoading = false;
+      }
     }
   }
 
   Future<void> _refresh() async {
-    if (_isDetailLoading) {
+    if (!mounted || _isDetailLoading) {
       return;
     }
 
@@ -149,8 +143,9 @@ class _NodeDetailScreenState extends State<NodeDetailScreen> {
   void _loadExtendedThermalStateInBackground(
     NodeThermalState visibleThermalState,
   ) {
-    if (!_shouldLoadExtendedThermalState(visibleThermalState) ||
-        _isExtendedThermalLoading) {
+    if (_isExtendedThermalLoading ||
+        (widget.client.cachedNodeThermalState(widget.node.name) != null &&
+            !_shouldLoadExtendedThermalState(visibleThermalState))) {
       return;
     }
 
@@ -172,7 +167,7 @@ class _NodeDetailScreenState extends State<NodeDetailScreen> {
 
       _extendedThermalState = extendedThermalState;
       final lastDetailData = _lastDetailData;
-      if (lastDetailData != null) {
+      if (lastDetailData != null && !_isDetailLoading) {
         final updatedDetailData = lastDetailData.copyWith(
           thermalState: extendedThermalState,
         );
@@ -335,6 +330,7 @@ class _NodeDetailScreenState extends State<NodeDetailScreen> {
         ],
       ),
       body: FutureBuilder<_NodeDetailData>(
+        key: ValueKey((widget.client, widget.node.name)),
         future: _detailFuture,
         builder: (context, snapshot) {
           final data = snapshot.data ?? _lastDetailData;

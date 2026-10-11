@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:pve_manager/core/l10n/l10n_extensions.dart';
+import 'package:pve_manager/core/settings/auto_refresh_mixin.dart';
 import 'package:pve_manager/data/models/node_status.dart';
 import 'package:pve_manager/data/models/pve_node.dart';
 import 'package:pve_manager/data/models/pve_resource.dart';
@@ -36,11 +37,11 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen>
+    with AutoRefreshMixin<DashboardScreen> {
   static const double _splitLayoutWidth = 840;
 
   late Future<PveSnapshot> _snapshotFuture;
-  Timer? _refreshTimer;
   bool _isSnapshotLoading = false;
   PveSnapshot? _lastSnapshot;
   _DashboardSelection? _selection;
@@ -49,41 +50,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _snapshotFuture = _loadSnapshotTracked();
-    widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-    _startRefreshTimer();
-  }
-
-  @override
-  void didUpdateWidget(DashboardScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.autoRefreshIntervalListenable !=
-        widget.autoRefreshIntervalListenable) {
-      oldWidget.autoRefreshIntervalListenable.removeListener(
-        _startRefreshTimer,
-      );
-      widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-      _startRefreshTimer();
-    }
   }
 
   @override
   void dispose() {
-    widget.autoRefreshIntervalListenable.removeListener(_startRefreshTimer);
-    _refreshTimer?.cancel();
     widget.client.close();
     super.dispose();
   }
 
-  void _startRefreshTimer() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(widget.autoRefreshIntervalListenable.value, (
-      _,
-    ) {
-      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) {
-        _refreshSnapshot();
-      }
-    });
-  }
+  @override
+  ValueListenable<Duration> get autoRefreshIntervalListenable =>
+      widget.autoRefreshIntervalListenable;
+
+  @override
+  Future<void> onAutoRefresh() => _refreshSnapshot();
 
   Future<PveSnapshot> _loadSnapshot() async {
     final initialResults = await Future.wait<Object>([
@@ -115,21 +95,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final loadedNodes = postLoadResults[1] as List<PveNode>;
 
     final snapshot = PveSnapshot(
-      nodes: baseNodes,
+      nodes: loadedNodes,
       resources: resources,
       clusterStatus: clusterStatus,
       nodePermissionDenied: nodesResult.permissionDenied,
       storagePermissionDenied: storagePermissionDenied,
     );
-    final snapshotWithNodeUsage = PveSnapshot(
-      nodes: loadedNodes,
-      resources: snapshot.resources,
-      clusterStatus: snapshot.clusterStatus,
-      nodePermissionDenied: snapshot.nodePermissionDenied,
-      storagePermissionDenied: snapshot.storagePermissionDenied,
-    );
-    _lastSnapshot = snapshotWithNodeUsage;
-    return snapshotWithNodeUsage;
+    if (mounted) {
+      _lastSnapshot = snapshot;
+    }
+    return snapshot;
   }
 
   Future<_ResourcesLoadResult> _loadResources() async {
@@ -251,7 +226,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _refreshSnapshot() async {
-    if (_isSnapshotLoading) {
+    if (!mounted || _isSnapshotLoading) {
       return;
     }
 

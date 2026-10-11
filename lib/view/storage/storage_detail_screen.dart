@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:pve_manager/core/l10n/l10n_extensions.dart';
+import 'package:pve_manager/core/settings/auto_refresh_mixin.dart';
 import 'package:pve_manager/core/utils/formatters.dart';
 import 'package:pve_manager/core/widgets/empty_state.dart';
 import 'package:pve_manager/core/widgets/error_state.dart';
@@ -30,21 +31,21 @@ class StorageDetailScreen extends StatefulWidget {
   State<StorageDetailScreen> createState() => _StorageDetailScreenState();
 }
 
-class _StorageDetailScreenState extends State<StorageDetailScreen> {
+class _StorageDetailScreenState extends State<StorageDetailScreen>
+    with AutoRefreshMixin<StorageDetailScreen> {
   late Future<PveStorageDetail> _detailFuture;
   final Map<_StorageSection, Future<List<PveStorageContent>>> _contentFutures =
       {};
-  Timer? _refreshTimer;
   PveStorageDetail? _lastDetail;
   _StorageSection _section = _StorageSection.overview;
   bool _isRefreshing = false;
+  bool _isDetailLoading = false;
+  int _detailGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _detailFuture = _loadDetail();
-    widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-    _startRefreshTimer();
   }
 
   @override
@@ -55,43 +56,36 @@ class _StorageDetailScreenState extends State<StorageDetailScreen> {
         oldWidget.client != widget.client) {
       _contentFutures.clear();
       _section = _StorageSection.overview;
+      _lastDetail = null;
+      _isRefreshing = false;
       _detailFuture = _loadDetail();
-    }
-    if (oldWidget.autoRefreshIntervalListenable !=
-        widget.autoRefreshIntervalListenable) {
-      oldWidget.autoRefreshIntervalListenable.removeListener(
-        _startRefreshTimer,
-      );
-      widget.autoRefreshIntervalListenable.addListener(_startRefreshTimer);
-      _startRefreshTimer();
     }
   }
 
   @override
-  void dispose() {
-    widget.autoRefreshIntervalListenable.removeListener(_startRefreshTimer);
-    _refreshTimer?.cancel();
-    super.dispose();
-  }
+  ValueListenable<Duration> get autoRefreshIntervalListenable =>
+      widget.autoRefreshIntervalListenable;
 
-  void _startRefreshTimer() {
-    _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(widget.autoRefreshIntervalListenable.value, (
-      _,
-    ) {
-      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) {
-        unawaited(_refresh());
-      }
-    });
-  }
+  @override
+  Future<void> onAutoRefresh() => _refresh();
 
   Future<PveStorageDetail> _loadDetail() async {
-    final detail = await widget.client.getNodeStorageDetail(
-      widget.storage.node,
-      widget.storage.name,
-    );
-    _lastDetail = detail;
-    return detail;
+    final generation = ++_detailGeneration;
+    _isDetailLoading = true;
+    try {
+      final detail = await widget.client.getNodeStorageDetail(
+        widget.storage.node,
+        widget.storage.name,
+      );
+      if (mounted && generation == _detailGeneration) {
+        _lastDetail = detail;
+      }
+      return detail;
+    } finally {
+      if (generation == _detailGeneration) {
+        _isDetailLoading = false;
+      }
+    }
   }
 
   Future<List<PveStorageContent>> _loadContent(_StorageSection section) {
@@ -115,34 +109,32 @@ class _StorageDetailScreenState extends State<StorageDetailScreen> {
   }
 
   Future<void> _refresh() async {
-    if (_isRefreshing) {
+    if (!mounted || _isRefreshing || _isDetailLoading) {
       return;
     }
 
     _isRefreshing = true;
     final detailFuture = _loadDetail();
+    final generation = _detailGeneration;
     final section = _section;
     if (section.contentType != null) {
       _contentFutures.remove(section);
     }
-    if (mounted) {
-      setState(() {
-        _detailFuture = detailFuture;
-        if (section.contentType != null) {
-          _loadContent(section);
-        }
-      });
-    }
+    final contentFuture = section.contentType != null
+        ? _loadContent(section)
+        : null;
+    setState(() {
+      _detailFuture = detailFuture;
+    });
 
     try {
-      await detailFuture;
-      if (section.contentType != null) {
-        await _loadContent(section);
-      }
+      await Future.wait<Object>([detailFuture, ?contentFuture]);
     } on Object {
       // FutureBuilder shows the error while keeping the last detail visible.
     } finally {
-      _isRefreshing = false;
+      if (mounted && generation == _detailGeneration) {
+        setState(() => _isRefreshing = false);
+      }
     }
   }
 
@@ -175,6 +167,7 @@ class _StorageDetailScreenState extends State<StorageDetailScreen> {
         ],
       ),
       body: FutureBuilder<PveStorageDetail>(
+        key: ValueKey((widget.client, widget.storage.id, widget.storage.node)),
         future: _detailFuture,
         builder: (context, snapshot) {
           final detail = snapshot.data ?? _lastDetail;
@@ -327,6 +320,7 @@ class _StorageDetailScreenState extends State<StorageDetailScreen> {
     }
 
     return FutureBuilder<List<PveStorageContent>>(
+      key: ValueKey(section),
       future: _loadContent(section),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
